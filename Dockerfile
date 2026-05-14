@@ -152,7 +152,7 @@ RUN node --version && npm --version && bun --version && uv --version \
 # Entrypoint shim: wires the coding-agent global AGENTS.md into the places
 # codex and opencode look at, then hands off to the original Hermes entrypoint.
 # See scripts/hermes-entrypoint.sh for why this is runtime and not buildtime.
-COPY templates/hermes /opt/hermes-assistant/templates/hermes
+COPY templates/assistant /opt/hermes-assistant/templates/assistant
 COPY scripts/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
 RUN chmod +x /usr/local/bin/hermes-entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/hermes-entrypoint.sh"]

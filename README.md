@@ -18,9 +18,9 @@ Tracked source files:
 
 | Path                                       | Purpose                                           |
 | ------------------------------------------ | ------------------------------------------------- |
-| `templates/hermes/SOUL.md`                 | Assistant persona template.                       |
-| `templates/hermes/AGENTS.md`               | Main assistant workflow template.                 |
-| `templates/hermes/coding-agents/AGENTS.md` | Codex/OpenCode workflow template.                 |
+| `templates/assistant/SOUL.md`                 | Assistant persona template.                       |
+| `templates/assistant/AGENTS.md`               | Main assistant workflow template.                 |
+| `templates/assistant/coding-agents/AGENTS.md` | Codex/OpenCode workflow template.                 |
 | `scripts/setup.sh`                         | Interactive one-command setup.                    |
 | `scripts/clean-wipe.sh`                    | Removes this assistant's Docker footprint.        |
 | `scripts/backup-state.sh`                  | Exports Docker volumes plus `.env`.               |

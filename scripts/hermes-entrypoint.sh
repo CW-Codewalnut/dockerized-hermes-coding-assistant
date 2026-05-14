@@ -22,7 +22,7 @@
 # drops to the hermes user, which is the only window where chown is possible.
 set -euo pipefail
 
-TEMPLATE_DATA="/opt/hermes-assistant/templates/hermes"
+TEMPLATE_DATA="/opt/hermes-assistant/templates/assistant"
 RULES_SRC="/opt/data/coding-agents/AGENTS.md"
 
 mkdir -p /opt/data /opt/data/coding-agents /workbench
