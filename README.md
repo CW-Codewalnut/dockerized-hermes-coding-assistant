@@ -16,15 +16,15 @@ A publishable Docker setup for running [Hermes Agent](https://hermes-agent.nousr
 
 Tracked source files:
 
-| Path                                       | Purpose                                           |
-| ------------------------------------------ | ------------------------------------------------- |
+| Path                                          | Purpose                                           |
+| --------------------------------------------- | ------------------------------------------------- |
 | `templates/assistant/SOUL.md`                 | Assistant persona template.                       |
 | `templates/assistant/AGENTS.md`               | Main assistant workflow template.                 |
 | `templates/assistant/coding-agents/AGENTS.md` | Codex/OpenCode workflow template.                 |
-| `scripts/setup.sh`                         | Interactive one-command setup.                    |
-| `scripts/clean-wipe.sh`                    | Removes this assistant's Docker footprint.        |
-| `scripts/backup-state.sh`                  | Exports Docker volumes plus `.env`.               |
-| `scripts/restore-state.sh`                 | Restores exported Docker volumes on another host. |
+| `scripts/setup.sh`                            | Interactive one-command setup.                    |
+| `scripts/clean-wipe.sh`                       | Removes this assistant's Docker footprint.        |
+| `scripts/backup-state.sh`                     | Exports Docker volumes plus `.env`.               |
+| `scripts/restore-state.sh`                    | Restores exported Docker volumes on another host. |
 
 Template placeholders are rendered into `/opt/data` at container startup. Runtime instruction files should never contain unresolved placeholder tokens.
 
