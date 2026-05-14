@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+data
+workbench
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.log
+.DS_Store
+.idea
+.vscode

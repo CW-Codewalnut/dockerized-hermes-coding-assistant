@@ -1,0 +1,44 @@
+name: ${ASSISTANT_SLUG:-hermes-assistant}
+
+services:
+  assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${ASSISTANT_SLUG:-hermes-assistant}:local
+    container_name: ${ASSISTANT_SLUG:-hermes-assistant}
+    restart: unless-stopped
+    command: gateway run
+    env_file: .env
+    environment:
+      # Hard-pin a few things so behaviour is deterministic regardless of .env content.
+      HERMES_DASHBOARD: "1"
+    ports:
+      # Bind to localhost only. Never 0.0.0.0 on a personal machine.
+      - "127.0.0.1:${API_PORT:-8642}:8642" # OpenAI-compatible API
+      - "127.0.0.1:${DASHBOARD_PORT:-9119}:9119" # Web dashboard
+    volumes:
+      # Runtime state: named Docker volumes, not host bind mounts. Export these
+      # volumes to migrate the assistant to another machine.
+      - hermes_data:/opt/data
+      # Workbench: persistent project checkouts, similar to ~/codes on a host.
+      # The assistant reuses repos here across tasks, fetches before work, and
+      # creates task branches in the existing checkout. The entrypoint chowns
+      # this volume to the hermes runtime user before Hermes starts.
+      - hermes_workbench:/workbench
+      # The coding-agent global AGENTS.md is seeded to data/coding-agents/AGENTS.md
+      # on first boot. The entrypoint shim (scripts/hermes-entrypoint.sh) symlinks
+      # it into the per-tool config dirs at startup, so codex and opencode each
+      # see it as their own AGENTS.md. Single source of truth.
+    shm_size: "1g" # for any browser/Playwright tool calls
+    deploy:
+      resources:
+        limits:
+          memory: ${DOCKER_MEMORY:-4G}
+          cpus: "${DOCKER_CPUS:-12.0}"
+
+volumes:
+  hermes_data:
+    name: ${ASSISTANT_SLUG:-hermes-assistant}_data
+  hermes_workbench:
+    name: ${ASSISTANT_SLUG:-hermes-assistant}_workbench
