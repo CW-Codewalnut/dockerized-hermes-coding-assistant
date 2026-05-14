@@ -146,6 +146,7 @@ docker compose exec -T "$SERVICE" sh -lc '
   test -n "${TELEGRAM_ALLOWED_USERS:-}" && echo "Telegram allowed users: present" || { echo "Telegram allowed users: missing"; exit 1; }
   test -n "${GH_TOKEN:-}" && echo "GitHub token: present" || { echo "GitHub token: missing"; exit 1; }
   ! grep -R "<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>" /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
+  ! grep -R "Replace these placeholders before running the assistant:" /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
   echo "Runtime instruction placeholders: replaced"
 '
 

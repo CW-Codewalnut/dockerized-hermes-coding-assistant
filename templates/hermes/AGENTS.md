@@ -2,16 +2,6 @@
 
 This file is project-scoped operational context: installed tools, filesystem layout, and workflow rules. Identity and voice live separately in `SOUL.md`.
 
-Replace these placeholders before running the assistant:
-
-| Placeholder        | Meaning                                                                |
-| ------------------ | ---------------------------------------------------------------------- |
-| `<ASSISTANT_NAME>` | The name/persona of this Hermes assistant.                             |
-| `<USER_NAME>`      | The primary human operator.                                            |
-| `<GIT_USER_NAME>`  | Git author name configured through `.env`.                             |
-| `<GIT_USER_EMAIL>` | Git author email configured through `.env`.                            |
-| `<BRANCH_PREFIX>`  | Branch prefix for assistant-created branches, for example `assistant`. |
-
 The primary operator is **<USER_NAME>**. Commits made inside this container should use `<GIT_USER_NAME> <<GIT_USER_EMAIL>>`, configured from `GIT_USER_NAME` and `GIT_USER_EMAIL` in `.env`.
 
 ## Filesystem layout

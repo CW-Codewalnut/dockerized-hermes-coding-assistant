@@ -46,15 +46,23 @@ render_template() {
     "$dst"
 }
 
-if [[ ! -f /opt/data/SOUL.md && -f "$TEMPLATE_DATA/SOUL.md" ]]; then
+needs_render() {
+  local dst="$1"
+  [[ ! -f "$dst" ]] && return 0
+  grep -q '<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>' "$dst" && return 0
+  grep -q 'Replace these placeholders before running the assistant:' "$dst" && return 0
+  return 1
+}
+
+if needs_render /opt/data/SOUL.md && [[ -f "$TEMPLATE_DATA/SOUL.md" ]]; then
   render_template "$TEMPLATE_DATA/SOUL.md" /opt/data/SOUL.md
 fi
 
-if [[ ! -f /opt/data/AGENTS.md && -f "$TEMPLATE_DATA/AGENTS.md" ]]; then
+if needs_render /opt/data/AGENTS.md && [[ -f "$TEMPLATE_DATA/AGENTS.md" ]]; then
   render_template "$TEMPLATE_DATA/AGENTS.md" /opt/data/AGENTS.md
 fi
 
-if [[ ! -f "$RULES_SRC" && -f "$TEMPLATE_DATA/coding-agents/AGENTS.md" ]]; then
+if needs_render "$RULES_SRC" && [[ -f "$TEMPLATE_DATA/coding-agents/AGENTS.md" ]]; then
   render_template "$TEMPLATE_DATA/coding-agents/AGENTS.md" "$RULES_SRC"
 fi
 

@@ -26,6 +26,8 @@ Tracked source files:
 | `scripts/backup-state.sh`                  | Exports Docker volumes plus `.env`.               |
 | `scripts/restore-state.sh`                 | Restores exported Docker volumes on another host. |
 
+Template placeholders are rendered into `/opt/data` at container startup. Runtime instruction files should never contain unresolved placeholder tokens.
+
 Runtime state:
 
 | Storage                                     | Contains                                                            |
