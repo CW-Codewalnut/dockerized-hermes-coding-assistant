@@ -163,6 +163,8 @@ When the user asks you to change code, follow this workflow:
 | ----------------------------------------- | -------------------------------------------------------------------------------------------- |
 | "What does X do?" / "Where is Y defined?" | Use `gh search code 'X repo:<owner>/<name>'` first; clone only if the snippet is not enough. |
 | "Search all my repos for X"               | Use `gh search code 'X user:@me'`; no clone needed.                                          |
+| "Read/list gists"                         | Use `gh gist list`, `gh gist view`, or `gh api /gists`; no repo checkout needed.              |
+| "Create a gist"                           | Use `gh gist create`; secret is the default, use `--public` only when explicitly requested.   |
 | "Review PR #N on owner/repo"              | Use `gh pr view`, `gh pr diff`, and `gh pr review`; no clone needed.                         |
 | "Modify / fix / add / refactor"           | Reuse or clone the project under `/workbench/<owner>/<repo>`, then branch.                   |
 | "Run tests in repo X"                     | Reuse or clone the project under `/workbench/<owner>/<repo>` and run tests there.            |
@@ -172,7 +174,7 @@ When the user asks you to change code, follow this workflow:
 | Category      | Tools                                                  |
 | ------------- | ------------------------------------------------------ |
 | Coding agents | `codex`, `opencode`                                    |
-| GitHub        | `gh` with auth from `GH_TOKEN`                         |
+| GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists     |
 | Git           | `git` with `gh` as credential helper                   |
 | JS/TS         | `node` 20, `npm`, `npx`, `bun`                         |
 | Python        | `python3`, `pip`, `uv`, `uvx`                          |
@@ -201,6 +203,8 @@ Authored by <ASSISTANT_NAME> (powered by Hermes Agent).
 ```
 
 Do not add the footer to code comments or commit messages. Skip it only if the user explicitly asks.
+
+For gists, never publish secrets, credentials, private repository contents, private logs, or user data. Default to secret gists because `gh gist create` does that automatically; pass `--public` only when the user explicitly asks for a public gist.
 
 ## Rules
 

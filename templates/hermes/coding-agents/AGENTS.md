@@ -46,7 +46,7 @@ If you detect that you are running on a different model, mention it in your fina
 
 ## Public attribution
 
-Whenever you produce content that will be publicly visible on GitHub, such as PR descriptions, PR review comments, or issue comments, append this footer after customizing the placeholder:
+Whenever you produce content that will be publicly visible on GitHub, such as PR descriptions, PR review comments, issue comments, or public gist descriptions/content, append this footer after customizing the placeholder:
 
 ```text
 ---
@@ -78,6 +78,7 @@ Do not fabricate flags. The installed tool help is the source of truth.
 
 - Do not write outside `/workbench/<your-current-clone>/`.
 - Do not echo, log, or include `GH_TOKEN`, `TELEGRAM_BOT_TOKEN`, or values from `.env`.
+- Do not create public gists or include private repository content in a gist unless the prompt explicitly asks.
 - Do not switch git remotes, rewrite history, force-push, or delete branches.
 - Do not install global packages unless the orchestrator explicitly asks.
 - Do not run `rm -rf` against a path you did not create in this session.

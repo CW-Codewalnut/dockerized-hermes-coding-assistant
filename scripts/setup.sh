@@ -102,7 +102,7 @@ echo
 echo "== Credentials =="
 prompt_env TELEGRAM_BOT_TOKEN "Telegram bot token" "" true
 prompt_env TELEGRAM_ALLOWED_USERS "Telegram allowed user IDs, comma-separated" ""
-prompt_env GH_TOKEN "GitHub classic PAT" "" true
+prompt_env GH_TOKEN "GitHub classic PAT with repo/gist scopes" "" true
 prompt_env API_SERVER_ENABLED "Enable external API server" "false"
 
 if ! docker info >/dev/null 2>&1; then
@@ -157,6 +157,21 @@ docker compose exec -T "$SERVICE" sh -lc '
 '
 
 docker compose exec -T "$SERVICE" gh auth status
+docker compose exec -T "$SERVICE" sh -lc '
+  set -eu
+  scopes="$(gh api -i /user 2>/dev/null | tr -d "\r" | awk -F": " "tolower(\$1)==\"x-oauth-scopes\" {print \$2; exit}")"
+  case ",$scopes," in
+    *", gist,"*|*",gist,"*|*", gist"*)
+      echo "GitHub gist scope: present"
+      ;;
+    *)
+      echo "GitHub gist scope: missing; regenerate GH_TOKEN with the gist scope" >&2
+      exit 1
+      ;;
+  esac
+  gh gist list --limit 1 >/dev/null
+  echo "GitHub gist read: ok"
+'
 docker compose exec -T -u hermes "$SERVICE" sh -lc 'test -s "$HOME/.codex/auth.json" && echo "Codex auth: present" || echo "Codex auth: not found"'
 docker compose exec -T -u hermes "$SERVICE" sh -lc 'find "$HOME/.local/share/opencode" "$HOME/.config/opencode" -type f 2>/dev/null | grep -q . && echo "OpenCode auth/config: present" || echo "OpenCode auth/config: not found"'
 docker compose exec -T -u hermes "$SERVICE" hermes status || true

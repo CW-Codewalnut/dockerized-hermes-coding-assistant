@@ -7,7 +7,7 @@ A publishable Docker setup for running [Hermes Agent](https://hermes-agent.nousr
 - Hermes Agent from the official Nous Research image.
 - Telegram gateway for chat access.
 - Codex CLI and OpenCode CLI for delegated coding work.
-- GitHub CLI wired through `GH_TOKEN`.
+- GitHub CLI wired through `GH_TOKEN` for repos and gists.
 - Node.js installed through `nvm` using the current LTS line.
 - Runtime state in named Docker volumes, not host folders.
 - Assistant-specific Docker names from `ASSISTANT_SLUG`, so multiple agents can run side by side.
@@ -55,7 +55,7 @@ The script will:
 - run `hermes setup model`;
 - run Codex device login;
 - run OpenCode auth login;
-- verify Telegram, GitHub, Codex/OpenCode state, and Hermes status.
+- verify Telegram, GitHub repo/gist access, Codex/OpenCode state, and Hermes status.
 
 Model defaults:
 
@@ -88,14 +88,16 @@ Important `.env` fields:
 | `DASHBOARD_PORT`, `API_PORT`                   | Localhost ports, useful when running multiple agents.                            |
 | `DOCKER_MEMORY`, `DOCKER_CPUS`                 | Container limits. Defaults are `4G` memory and `12.0` CPUs; adjust for the host. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` | Telegram access.                                                                 |
-| `GH_TOKEN`                                     | Classic GitHub PAT for `gh` and git pushes.                                      |
+| `GH_TOKEN`                                     | Classic GitHub PAT for `gh`, git pushes, and GitHub Gists.                       |
 
 Recommended GitHub PAT scopes:
 
 - `repo`
+- `gist`
 - `read:org` if you use org repos
 
 Leave `delete_repo`, `admin:*`, and `workflow` disabled.
+GitHub's classic PAT model exposes gist read/create access as a single `gist` scope.
 
 ## Day-To-Day
 
@@ -133,6 +135,7 @@ Default behavior:
 | User asks                   | Assistant does                                                     |
 | --------------------------- | ------------------------------------------------------------------ |
 | Explain code                | Uses GitHub search first; opens a local checkout only if needed.   |
+| Read or create gists        | Uses `gh gist`; creates secret gists unless public is requested.   |
 | Trivial mechanical edit     | Handles it directly in the persistent checkout.                    |
 | Reasoning-heavy coding task | Delegates to Codex or OpenCode; asks which one if unspecified.     |
 | Long Codex/OpenCode run     | Starts it in the background and monitors it with the process tool. |
@@ -189,6 +192,7 @@ Use `--prune-system` carefully: it can delete stopped containers and unused imag
 | Container exits immediately   | `docker compose logs assistant`                                                                   |
 | Telegram bot does not respond | Check `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USERS`.                                          |
 | GitHub auth fails             | Check `GH_TOKEN`, then recreate with `docker compose up -d`.                                      |
+| Gist access fails             | Regenerate `GH_TOKEN` with the `gist` scope, then recreate with `docker compose up -d`.           |
 | Codex says not logged in      | `docker compose exec -u hermes -it assistant codex login --device-auth`                           |
 | Codex task times out          | Increase `agent.gateway_timeout` and `terminal.timeout` in `/opt/data/config.yaml`, then restart. |
 | OpenCode says no provider     | `docker compose exec -u hermes -it assistant opencode auth login`                                 |
