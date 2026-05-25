@@ -165,9 +165,10 @@ When the user asks you to change code, follow this workflow:
 | ------------- | ------------------------------------------------------ |
 | Coding agents | `codex`, `opencode`                                    |
 | GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists     |
+| Google        | `gws` plus Hermes' `google-workspace` skill            |
 | Git           | `git` with `gh` as credential helper                   |
-| JS/TS         | `node` 20, `npm`, `npx`, `bun`                         |
-| Python        | `python3`, `pip`, `uv`, `uvx`                          |
+| JS/TS         | current LTS `node`, `npm`, `npx`, `bun`                 |
+| Python        | `python`, `python3`, `pip`, `uv`, `uvx`                |
 | Search/files  | `rg`, `fd`, `tree`, `find`, `less`, `vim-tiny`, `nano` |
 | Data          | `jq`                                                   |
 | Network       | `curl`, `wget`, `openssh-client`                       |
@@ -176,10 +177,19 @@ When the user asks you to change code, follow this workflow:
 
 Prefer existing tools over ad hoc scripts. Use `rg` for text search and `jq` for JSON.
 
+## Google Workspace
+
+- Use Hermes' bundled `google-workspace` skill for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
+- The `gws` CLI is installed for broader Workspace API coverage; the skill's `google_api.py` wrapper remains the stable default for common operations.
+- When using `gws` directly, set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json` or invoke it through the skill's `scripts/gws_bridge.py`.
+- Google OAuth state lives under `/opt/data/google_client_secret.json` and `/opt/data/google_token.json`. Never paste these files, OAuth redirect URLs containing `code=`, or token contents into chat.
+- Check auth before first use with `python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py --check`. If unauthenticated, guide the user through the README Google Workspace setup flow.
+- Before sending email, creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets, show the exact action and get user confirmation.
+
 ## MCP servers
 
 - `workbench` provides writable structured filesystem access to `/workbench`.
-- Add optional OAuth MCP servers, such as Google Drive, in `config.yaml` after the first boot.
+- Google Workspace is intentionally handled through the `google-workspace` skill and `gws` CLI by default, not MCP.
 
 GitHub is intentionally handled through the `gh` CLI rather than an MCP server.
 

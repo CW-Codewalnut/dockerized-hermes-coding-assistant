@@ -69,11 +69,12 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # BUN_INSTALL=/usr/local so the bun binary lands on PATH.
 RUN curl -fsSL https://bun.com/install | bash
 
-# Coding sub-agents — installed via bun for speed.
+# Global agent CLIs — installed via bun for speed.
 #   - Codex CLI → ChatGPT Plus/Pro subscription (device-auth)
 #   - OpenCode  → same OpenCode Go subscription as the Hermes brain
+#   - gws       → Google Workspace CLI backend for Hermes' google-workspace skill
 # Bun writes global binaries to $BUN_INSTALL/bin (= /usr/local/bin), already on PATH.
-RUN bun install -g @openai/codex opencode-ai
+RUN bun install -g @openai/codex opencode-ai @googleworkspace/cli@0.22.5
 
 # Configure git: let gh act as the credential helper for github.com so
 # `git push` works without ever materialising the PAT on disk.
@@ -94,7 +95,8 @@ RUN git config --system credential.https://github.com.helper "" \
 # was unreachable from the shell. The shebang inside the binary points at
 # the venv's python by absolute path, so calling it via symlink uses the
 # right interpreter without needing activation.
-RUN ln -s /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes
+RUN ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
+       && ln -sf /opt/hermes/.venv/bin/python /usr/local/bin/python
 
 # Patch Hermes' base entrypoint to stop creating ${HERMES_HOME}/home/.
 #
@@ -146,6 +148,7 @@ RUN F=/opt/hermes/hermes_state.py \
 # Sanity-check the toolchain at build time so failures surface early.
 RUN node --version && npm --version && bun --version && uv --version \
        && codex --version && opencode --version \
+       && gws --version && python --version \
        && gh --version && git --version \
        && rg --version | head -n1 && fd --version && jq --version || true
 
