@@ -183,7 +183,7 @@ Prefer existing tools over ad hoc scripts. Use `rg` for text search and `jq` for
 - The `gws` CLI is installed for broader Workspace API coverage; the skill's `google_api.py` wrapper remains the stable default for common operations.
 - When using `gws` directly, set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json` or invoke it through the skill's `scripts/gws_bridge.py`.
 - Google OAuth state lives under `/opt/data/google_client_secret.json` and `/opt/data/google_token.json`. Never paste these files, OAuth redirect URLs containing `code=`, or token contents into chat.
-- Check auth before first use with `python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py --check`. If unauthenticated, guide the user through the README Google Workspace setup flow.
+- Check auth before first use with `/opt/hermes/.venv/bin/python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py --check`. If unauthenticated, guide the user through the README Google Workspace setup flow.
 - Before sending email, creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets, show the exact action and get user confirmation.
 
 ## MCP servers

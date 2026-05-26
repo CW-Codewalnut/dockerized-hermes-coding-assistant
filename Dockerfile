@@ -96,7 +96,8 @@ RUN git config --system credential.https://github.com.helper "" \
 # the venv's python by absolute path, so calling it via symlink uses the
 # right interpreter without needing activation.
 RUN ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
-       && ln -sf /opt/hermes/.venv/bin/python /usr/local/bin/python
+       && printf '%s\n' '#!/usr/bin/env sh' 'exec /opt/hermes/.venv/bin/python "$@"' > /usr/local/bin/python \
+       && chmod +x /usr/local/bin/python
 
 # Patch Hermes' base entrypoint to stop creating ${HERMES_HOME}/home/.
 #

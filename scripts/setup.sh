@@ -94,10 +94,42 @@ You will need:
 EOF
 }
 
+json_file_is_valid() {
+  local path="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$path" >/dev/null 2>&1
+  elif command -v python >/dev/null 2>&1; then
+    python -c 'import json, sys; json.load(open(sys.argv[1]))' "$path" >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
+
+read_google_client_secret_json() {
+  local output_path="$1"
+  local first_line="${2:-}"
+  local line
+
+  : > "$output_path"
+  if [[ -n "$first_line" ]]; then
+    printf '%s\n' "$first_line" >> "$output_path"
+  fi
+
+  while ! json_file_is_valid "$output_path"; do
+    if ! IFS= read -r line; then
+      break
+    fi
+    [[ "$line" == "END_GOOGLE_JSON" ]] && break
+    printf '%s\n' "$line" >> "$output_path"
+  done
+}
+
 setup_google_workspace() {
   local gsetup container_secret client_secret_path auth_url oauth_callback
-  gsetup='python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
+  local client_secret_source temp_secret_path
+  gsetup='/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
   container_secret="/tmp/hermes-google-client-secret.json"
+  temp_secret_path=""
 
   echo
   echo "== Google Workspace =="
@@ -134,25 +166,98 @@ EOF
   if docker compose exec -T -u hermes "$SERVICE" test -s /opt/data/google_client_secret.json; then
     echo "Google OAuth client secret: already stored"
   else
-    while true; do
-      read -r -p "Path to downloaded OAuth Desktop client JSON (blank to skip): " client_secret_path
-      if [[ -z "$client_secret_path" ]]; then
-        print_google_workspace_skip_instructions
-        return 0
+    if [[ -n "${GOOGLE_CLIENT_SECRET_B64:-}" ]]; then
+      temp_secret_path="$(mktemp)"
+      chmod 600 "$temp_secret_path"
+      if ! printf '%s' "$GOOGLE_CLIENT_SECRET_B64" | base64 --decode > "$temp_secret_path" 2>/dev/null; then
+        printf '%s' "$GOOGLE_CLIENT_SECRET_B64" | base64 -d > "$temp_secret_path"
       fi
-      if [[ -f "$client_secret_path" ]]; then
-        break
-      fi
-      echo "File not found: $client_secret_path"
-    done
+      client_secret_path="$temp_secret_path"
+      echo "Google OAuth client secret: loaded from GOOGLE_CLIENT_SECRET_B64"
+    else
+      cat <<'EOF'
+Provide the OAuth Desktop client JSON.
+
+VPS-friendly default: paste the JSON contents here. You can also provide a file
+path if the JSON is already on this machine.
+EOF
+
+      read -r -p "Source: paste, path, or skip [paste]: " client_secret_source
+      client_secret_source="${client_secret_source:-paste}"
+
+      case "$client_secret_source" in
+        \{*)
+          temp_secret_path="$(mktemp)"
+          chmod 600 "$temp_secret_path"
+          cat <<'EOF'
+Detected JSON at the prompt. If it spans multiple lines, continue pasting.
+If the script keeps waiting after the final }, type END_GOOGLE_JSON.
+EOF
+          read_google_client_secret_json "$temp_secret_path" "$client_secret_source"
+          if [[ ! -s "$temp_secret_path" ]]; then
+            rm -f "$temp_secret_path"
+            print_google_workspace_skip_instructions
+            return 0
+          fi
+          client_secret_path="$temp_secret_path"
+          ;;
+        paste|p)
+          temp_secret_path="$(mktemp)"
+          chmod 600 "$temp_secret_path"
+          cat <<'EOF'
+Paste the full OAuth client JSON now.
+The script continues automatically when the JSON is complete.
+If it keeps waiting after the final }, type END_GOOGLE_JSON on its own line.
+EOF
+          read_google_client_secret_json "$temp_secret_path"
+          if [[ ! -s "$temp_secret_path" ]]; then
+            rm -f "$temp_secret_path"
+            print_google_workspace_skip_instructions
+            return 0
+          fi
+          client_secret_path="$temp_secret_path"
+          ;;
+        path|file|f)
+          while true; do
+            read -r -p "Path to OAuth Desktop client JSON (blank to skip): " client_secret_path
+            if [[ -z "$client_secret_path" ]]; then
+              print_google_workspace_skip_instructions
+              return 0
+            fi
+            if [[ -f "$client_secret_path" ]]; then
+              break
+            fi
+            echo "File not found: $client_secret_path"
+          done
+          ;;
+        skip|s)
+          print_google_workspace_skip_instructions
+          return 0
+          ;;
+        *)
+          echo "Unknown source: $client_secret_source" >&2
+          print_google_workspace_skip_instructions
+          return 0
+          ;;
+      esac
+    fi
 
     docker compose cp "$client_secret_path" "$SERVICE:$container_secret"
+    rm -f "$temp_secret_path"
     docker compose exec -T "$SERVICE" sh -lc "chown 10000:10000 '$container_secret' && chmod 600 '$container_secret'"
-    docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --client-secret '$container_secret'"
+    if ! docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --client-secret '$container_secret'"; then
+      docker compose exec -T "$SERVICE" rm -f "$container_secret"
+      echo "Google OAuth client secret was not stored. Check that you pasted the full Desktop OAuth JSON." >&2
+      print_google_workspace_skip_instructions
+      return 0
+    fi
     docker compose exec -T "$SERVICE" rm -f "$container_secret"
   fi
 
-  auth_url="$(docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-url")"
+  if ! auth_url="$(docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-url")"; then
+    echo "Could not generate a Google auth URL. Rerun setup after checking the OAuth client JSON." >&2
+    return 0
+  fi
 
   echo
   echo "Open this URL in your browser and approve access:"
@@ -168,7 +273,7 @@ Google Workspace authorization is pending.
 
 To finish later, rerun `scripts/setup.sh` and answer yes at the Google Workspace
 prompt, or run this inside the container:
-  GSETUP="python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"
+  GSETUP="/opt/hermes/.venv/bin/python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"
   $GSETUP --auth-url
   $GSETUP --auth-code 'PASTE_FULL_REDIRECT_URL_HERE'
 EOF
@@ -285,7 +390,7 @@ docker compose exec -T -u hermes "$SERVICE" sh -lc '
   set -eu
   command -v gws >/dev/null
   echo "Google Workspace CLI: $(gws --version | head -n1)"
-  if python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check >/dev/null 2>&1; then
+  if /opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check >/dev/null 2>&1; then
     echo "Google Workspace auth: present"
   else
     echo "Google Workspace auth: not configured"

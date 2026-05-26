@@ -139,72 +139,41 @@ http://localhost:<DASHBOARD_PORT>
 
 ## Google Workspace
 
-Hermes already includes the `google-workspace` skill. This image installs `gws` so the skill can prefer Google's Workspace CLI for broader API coverage, while keeping Hermes' Python fallback available.
+Hermes already includes the `google-workspace` skill. This image installs `gws` so the skill can use Google's Workspace CLI for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
 
-No `.env` value is needed for normal user-consent OAuth. Google credential files are stored in the `${ASSISTANT_SLUG}_data` Docker volume:
+No `.env` value is needed. During `scripts/setup.sh`, answer yes at the Google Workspace prompt and paste the downloaded OAuth client JSON. The script stores credentials in the `${ASSISTANT_SLUG}_data` Docker volume:
 
-| Path                                  | Purpose                                      |
-| ------------------------------------- | -------------------------------------------- |
-| `/opt/data/google_client_secret.json` | OAuth 2.0 Desktop client downloaded from GCP |
-| `/opt/data/google_token.json`         | Refreshable user token created by setup      |
+| Path                                  | Purpose                                 |
+| ------------------------------------- | --------------------------------------- |
+| `/opt/data/google_client_secret.json` | OAuth 2.0 Desktop client from Google    |
+| `/opt/data/google_token.json`         | Refreshable user token created by setup |
 
-One-time Google Cloud setup:
+Create the OAuth client once in Google Cloud:
 
-1. Create or select a Google Cloud project: <https://console.cloud.google.com/projectselector2/home/dashboard>
-2. Enable the APIs you need: Gmail API, Google Calendar API, Google Drive API, Google Sheets API, Google Docs API, and People API.
-3. Create OAuth credentials at <https://console.cloud.google.com/apis/credentials>.
-4. Use application type `Desktop app`.
-5. If the OAuth app is in testing mode, add your Google account as a test user at <https://console.cloud.google.com/auth/audience>.
-6. Download the client secret JSON.
+1. Create or select a project: <https://console.cloud.google.com/projectselector2/home/dashboard>
+2. Enable the APIs you need: Gmail, Calendar, Drive, Sheets, Docs, and People.
+3. Create credentials: <https://console.cloud.google.com/apis/credentials>
+4. Choose `OAuth client ID` → `Desktop app`, then download the JSON.
+5. If the app is in testing mode, add your account at <https://console.cloud.google.com/auth/audience>.
 
-The onboarding script handles the copy and OAuth exchange. Run:
+The setup script prints a Google auth URL. Open it, approve access, then paste the full redirected `http://localhost:1/?code=...` URL back into the script. The localhost page failing to load is expected.
 
-```bash
-scripts/setup.sh
-```
-
-Answer yes at the Google Workspace prompt, provide the host path to the downloaded OAuth client JSON, open the printed URL, then paste the full redirected `http://localhost:1/?code=...` URL back into the script. The localhost page failing to load is expected.
-
-Manual equivalent:
+If the JSON is already on the machine running Docker, choose `path` instead of `paste`. For automated VPS setup:
 
 ```bash
-docker compose cp /path/to/client_secret.json assistant:/tmp/google_client_secret.json
-docker compose exec assistant sh -lc 'chown 10000:10000 /tmp/google_client_secret.json && chmod 600 /tmp/google_client_secret.json'
-docker compose exec -u hermes -it assistant bash
-GSETUP="python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"
-$GSETUP --client-secret /tmp/google_client_secret.json
-rm -f /tmp/google_client_secret.json
-$GSETUP --auth-url
+GOOGLE_CLIENT_SECRET_B64="$(base64 -w0 /path/to/client_secret.json)" scripts/setup.sh
 ```
 
-Open the printed URL in your browser, approve access, and copy the full redirected URL from the browser address bar.
+On macOS, produce the value with `base64 -i /path/to/client_secret.json | tr -d '\n'`.
 
-Back in the container shell:
+Verify later:
 
 ```bash
-$GSETUP --auth-code 'PASTE_FULL_REDIRECT_URL_HERE'
-$GSETUP --check-live
+docker compose exec -u hermes assistant \
+  sh -lc '/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check-live'
 ```
 
-Verify useful reads:
-
-```bash
-GAPI="python $HERMES_HOME/skills/productivity/google-workspace/scripts/google_api.py"
-$GAPI calendar list
-$GAPI drive search "mimeType='application/pdf'" --raw-query --max 5
-
-export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json
-gws drive files list --params '{"pageSize": 5}'
-gws --version
-```
-
-For daily use, ask Hermes to use Google Workspace. For direct terminal work, use the `GAPI` wrapper above when you want the stable Hermes JSON contract, or set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json` and use `gws` directly for broader Workspace API coverage.
-
-Safety rules:
-
-- Do not commit or paste `google_client_secret.json`, `google_token.json`, OAuth URLs containing `code=`, or exported volume backups.
-- Confirm with the user before sending email, creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets.
-- Prefer OAuth user consent for this personal assistant. Avoid Google Workspace domain-wide delegation unless you have a specific org-wide service-account use case.
+Treat `google_client_secret.json`, `google_token.json`, OAuth redirect URLs containing `code=`, and exported volume backups as secrets. Prefer OAuth user consent for this personal assistant; avoid Google Workspace domain-wide delegation unless you specifically need org-wide service-account access.
 
 ## Coding Workflow
 
