@@ -31,11 +31,11 @@ Template placeholders are rendered into `/opt/data` at container startup. Runtim
 
 Runtime state:
 
-| Storage                                     | Contains                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------- |
+| Storage                                     | Contains                                                             |
+| ------------------------------------------- | -------------------------------------------------------------------- |
 | `${ASSISTANT_SLUG}_data` Docker volume      | Hermes config, memories, sessions, logs, Codex/OpenCode/Google auth. |
-| `${ASSISTANT_SLUG}_workbench` Docker volume | Persistent project checkouts under `/workbench/<owner>/<repo>`.     |
-| `.env`                                      | Local identity, Telegram token, GitHub token, ports, Docker limits. |
+| `${ASSISTANT_SLUG}_workbench` Docker volume | Persistent project checkouts under `/workbench/<owner>/<repo>`.      |
+| `.env`                                      | Local identity, Telegram token, GitHub token, ports, Docker limits.  |
 
 Do not commit `.env` or exported volume backups.
 
@@ -45,7 +45,7 @@ Copy the env file, fill what you already know, then run the setup script:
 
 ```bash
 cp .env.example .env
-$EDITOR .env
+vi .env
 chmod 600 .env
 scripts/setup.sh
 ```
@@ -245,7 +245,7 @@ Use `--prune-system` carefully: it can delete stopped containers and unused imag
 | Gist access fails             | Regenerate `GH_TOKEN` with the `gist` scope, then recreate with `docker compose up -d`.           |
 | `gws` command missing         | Rebuild the image with `docker compose up -d --build`.                                            |
 | Google says not authenticated | Run the Google Workspace setup flow and verify `/opt/data/google_token.json` exists.              |
-| Google API returns 403        | Enable the API in Google Cloud Console, or revoke and re-authorize if scopes are missing.          |
+| Google API returns 403        | Enable the API in Google Cloud Console, or revoke and re-authorize if scopes are missing.         |
 | Codex says not logged in      | `docker compose exec -u hermes -it assistant codex login --device-auth`                           |
 | Codex task times out          | Increase `agent.gateway_timeout` and `terminal.timeout` in `/opt/data/config.yaml`, then restart. |
 | OpenCode says no provider     | `docker compose exec -u hermes -it assistant opencode auth login`                                 |
