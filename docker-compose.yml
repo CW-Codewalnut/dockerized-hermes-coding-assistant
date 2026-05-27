@@ -31,11 +31,29 @@ services:
       # it into the per-tool config dirs at startup, so codex and opencode each
       # see it as their own AGENTS.md. Single source of truth.
     shm_size: "1g" # for any browser/Playwright tool calls
+    cap_drop:
+      - ALL
+    cap_add:
+      # Minimum runtime capabilities needed for entrypoint ownership fixes.
+      - CHOWN
+      - FOWNER
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m
+      - /var/tmp:rw,noexec,nosuid,nodev,size=256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     deploy:
       resources:
         limits:
           memory: ${DOCKER_MEMORY:-4G}
           cpus: "${DOCKER_CPUS:-12.0}"
+          pids: 512
 
 volumes:
   hermes_data:
