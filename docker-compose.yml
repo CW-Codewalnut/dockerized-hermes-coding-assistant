@@ -34,10 +34,13 @@ services:
     cap_drop:
       - ALL
     cap_add:
-      # Minimum runtime capabilities needed for entrypoint ownership fixes.
+      # Minimum runtime capabilities needed for entrypoint ownership fixes
+      # and for Hermes' base entrypoint to drop from root to the hermes user.
       - CHOWN
       - FOWNER
       - DAC_OVERRIDE
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     tmpfs:
