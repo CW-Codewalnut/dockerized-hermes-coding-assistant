@@ -94,6 +94,24 @@ You will need:
 EOF
 }
 
+_SETUP_STTY_STATE=""
+
+setup_disable_echo() {
+  if [[ -t 0 && -z "$_SETUP_STTY_STATE" ]]; then
+    _SETUP_STTY_STATE="$(stty -g)"
+    stty -echo
+    trap 'setup_enable_echo; echo; exit 130' INT TERM
+  fi
+}
+
+setup_enable_echo() {
+  if [[ -n "$_SETUP_STTY_STATE" ]]; then
+    stty "$_SETUP_STTY_STATE"
+    _SETUP_STTY_STATE=""
+    trap - INT TERM
+  fi
+}
+
 json_file_is_valid() {
   local path="$1"
   if command -v python3 >/dev/null 2>&1; then
@@ -111,6 +129,7 @@ read_google_client_secret_json() {
   local line
 
   : > "$output_path"
+  setup_disable_echo
   if [[ -n "$first_line" ]]; then
     printf '%s\n' "$first_line" >> "$output_path"
   fi
@@ -122,6 +141,8 @@ read_google_client_secret_json() {
     [[ "$line" == "END_GOOGLE_JSON" ]] && break
     printf '%s\n' "$line" >> "$output_path"
   done
+  setup_enable_echo
+  echo
 }
 
 setup_google_workspace() {
@@ -178,11 +199,13 @@ EOF
       cat <<'EOF'
 Provide the OAuth Desktop client JSON.
 
-VPS-friendly default: paste the JSON contents here. You can also provide a file
-path if the JSON is already on this machine.
+VPS-friendly default: paste the JSON contents. Secret input is hidden. You can
+also provide a file path if the JSON is already on this machine.
 EOF
 
-      read -r -p "Source: paste, path, or skip [paste]: " client_secret_source
+      setup_disable_echo
+      read -r -p "Source (hidden): paste JSON, or type path/skip [paste]: " client_secret_source || client_secret_source=""
+      echo
       client_secret_source="${client_secret_source:-paste}"
 
       case "$client_secret_source" in
@@ -190,7 +213,7 @@ EOF
           temp_secret_path="$(mktemp)"
           chmod 600 "$temp_secret_path"
           cat <<'EOF'
-Detected JSON at the prompt. If it spans multiple lines, continue pasting.
+Detected JSON at the prompt. Input remains hidden. If it spans multiple lines, continue pasting.
 If the script keeps waiting after the final }, type END_GOOGLE_JSON.
 EOF
           read_google_client_secret_json "$temp_secret_path" "$client_secret_source"
@@ -202,10 +225,11 @@ EOF
           client_secret_path="$temp_secret_path"
           ;;
         paste|p)
+          setup_enable_echo
           temp_secret_path="$(mktemp)"
           chmod 600 "$temp_secret_path"
           cat <<'EOF'
-Paste the full OAuth client JSON now.
+Paste the full OAuth client JSON now. Input is hidden.
 The script continues automatically when the JSON is complete.
 If it keeps waiting after the final }, type END_GOOGLE_JSON on its own line.
 EOF
@@ -218,6 +242,7 @@ EOF
           client_secret_path="$temp_secret_path"
           ;;
         path|file|f)
+          setup_enable_echo
           while true; do
             read -r -p "Path to OAuth Desktop client JSON (blank to skip): " client_secret_path
             if [[ -z "$client_secret_path" ]]; then
@@ -231,10 +256,12 @@ EOF
           done
           ;;
         skip|s)
+          setup_enable_echo
           print_google_workspace_skip_instructions
           return 0
           ;;
         *)
+          setup_enable_echo
           echo "Unknown source: $client_secret_source" >&2
           print_google_workspace_skip_instructions
           return 0

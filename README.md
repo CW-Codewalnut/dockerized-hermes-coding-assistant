@@ -141,7 +141,7 @@ http://localhost:<DASHBOARD_PORT>
 
 Hermes already includes the `google-workspace` skill. This image installs `gws` so the skill can use Google's Workspace CLI for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
 
-No `.env` value is needed. During `scripts/setup.sh`, answer yes at the Google Workspace prompt and paste the downloaded OAuth client JSON. The script stores credentials in the `${ASSISTANT_SLUG}_data` Docker volume:
+No `.env` value is needed. During `scripts/setup.sh`, answer yes at the Google Workspace prompt and paste the downloaded OAuth client JSON. The paste is hidden so the JSON is not echoed into your terminal. The script stores credentials in the `${ASSISTANT_SLUG}_data` Docker volume:
 
 | Path                                  | Purpose                                 |
 | ------------------------------------- | --------------------------------------- |
