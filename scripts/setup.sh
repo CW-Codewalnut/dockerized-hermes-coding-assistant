@@ -149,7 +149,10 @@ setup_google_workspace() {
   local gsetup container_secret client_secret_path auth_url oauth_callback
   local client_secret_source temp_secret_path
   gsetup='/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
-  container_secret="/tmp/hermes-google-client-secret.json"
+  # Store the transfer file in the persistent data volume, not /tmp. On hardened
+  # VPS Compose configs /tmp is tmpfs, so a restart between `cp` and `exec` can
+  # otherwise make the copied file disappear before the setup command reads it.
+  container_secret="/opt/data/.hermes-google-client-secret.json.tmp"
   temp_secret_path=""
 
   echo
