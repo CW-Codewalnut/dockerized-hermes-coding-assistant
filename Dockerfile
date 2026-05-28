@@ -126,13 +126,17 @@ RUN ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
 # subprocess HOME consistent with interactive shells, so all coding-agent CLIs
 # converge on persistent auth/config state under /opt/data.
 #
-# Idempotent (grep guards) and self-verifying (asserts the anchor still exists
-# upstream so a base-image refactor breaks the build loudly instead of silently).
+# Idempotent: newer Hermes images may already omit the `home` directory from
+# this mkdir list. In that case, keep building and let the runtime shim's
+# `rm -rf /opt/data/home` remain the fallback.
 RUN F=/opt/hermes/docker/entrypoint.sh \
-       && grep -q ',workspace,home}' "$F" \
-       && sed -i 's|,workspace,home}|,workspace}|' "$F" \
-       && ! grep -q ',workspace,home}' "$F" \
-       && grep -q ',workspace}' "$F"
+       && if grep -q ',workspace,home}' "$F"; then \
+            sed -i 's|,workspace,home}|,workspace}|' "$F" \
+            && grep -q ',workspace}' "$F"; \
+          else \
+            echo "Hermes entrypoint no longer has workspace,home brace pattern; leaving as-is"; \
+          fi \
+       && ! grep -q ',workspace,home}' "$F"
 
 # Patch Hermes' WAL-fallback marker list to handle "database is locked".
 #

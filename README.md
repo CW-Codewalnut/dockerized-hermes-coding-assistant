@@ -87,7 +87,7 @@ Leave these disabled unless you know you need them:
 - `workflow`
 - broad account/package/project/notification scopes
 
-For Cursor, prefer `CURSOR_API_KEY` on VPS or Docker installs. It authenticates the Cursor CLI as your Cursor account and avoids browser handoff inside the container. Browser login with `agent login` is still available for interactive local setups.
+For Cursor, prefer `CURSOR_API_KEY` on VPS or Docker installs. It authenticates the Cursor CLI as your Cursor account and avoids browser handoff inside the container. Generate one from [Cursor user API keys](https://cursor.com/dashboard/api?section=user-keys#user-api-keys). Browser login with `agent login` is still available for interactive local setups.
 
 ## Model Defaults
 

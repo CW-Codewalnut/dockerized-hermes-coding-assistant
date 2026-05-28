@@ -29,11 +29,17 @@ test -f .env
 
 docker run --rm \
   -e OUT="$OUT" \
-  -v "${SLUG}_data:/state/data:ro" \
-  -v "${SLUG}_workbench:/state/workbench:ro" \
+  -v "${SLUG}_data:/data:ro" \
+  -v "${SLUG}_workbench:/workbench:ro" \
   -v "$ROOT:/repo:ro" \
   -v "$ROOT:/backup" \
   alpine:latest \
-  sh -lc 'tar -czf "/backup/$OUT" -C /state data workbench -C /repo .env'
+  sh -lc '
+    set -eu
+    test -d /data
+    test -d /workbench
+    test -f /repo/.env
+    tar -czf "/backup/$OUT" -C / data workbench -C /repo .env
+  '
 
 echo "Wrote $OUT"
