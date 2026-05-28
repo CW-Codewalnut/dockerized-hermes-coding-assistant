@@ -133,62 +133,6 @@ Dashboard:
 http://localhost:<DASHBOARD_PORT>
 ```
 
-## Updating An Existing Install Without Losing State
-
-The important rule: do not delete the Docker volumes. State lives in `${ASSISTANT_SLUG}_data` and `${ASSISTANT_SLUG}_workbench`.
-
-Safe update flow:
-
-```bash
-cd /path/to/hermes-assistant
-
-# 1. Back up volumes and .env first.
-scripts/backup-state.sh
-
-# 2. Pull the new repository code.
-# If you changed tracked files locally, commit or stash those changes first.
-git pull
-
-# 3. Add any new .env keys introduced by the update.
-# Example for Cursor CLI support:
-grep -q '^CURSOR_API_KEY=' .env || printf '\nCURSOR_API_KEY=\n' >> .env
-vi .env
-
-# 4. Rebuild and recreate the container while keeping named volumes.
-docker compose up -d --build
-```
-
-Never use these for a normal update:
-
-```bash
-docker compose down -v
-docker volume rm ...
-scripts/clean-wipe.sh
-```
-
-Those remove state.
-
-### Updating Runtime Instructions
-
-The entrypoint renders `SOUL.md`, `AGENTS.md`, and `coding-agents/AGENTS.md` into `/opt/data` on first boot. It does not overwrite already-customized runtime instructions.
-
-If an update changes the templates and you want the running assistant to pick them up, back up and regenerate only the instruction files:
-
-```bash
-docker compose exec -u hermes assistant sh -lc '
-  cp /opt/data/AGENTS.md /opt/data/AGENTS.md.before-template-update
-  cp /opt/data/coding-agents/AGENTS.md /opt/data/coding-agents/AGENTS.md.before-template-update
-'
-
-docker compose exec assistant sh -lc '
-  rm -f /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md
-'
-
-docker compose up -d --force-recreate
-```
-
-This preserves memories, sessions, auth, config, logs, and `/workbench` checkouts. It only regenerates those instruction files from the latest templates.
-
 ## Backups And Migration
 
 Create an export:
