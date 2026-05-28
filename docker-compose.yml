@@ -29,7 +29,9 @@ services:
       # The coding-agent global AGENTS.md is seeded to data/coding-agents/AGENTS.md
       # on first boot. The entrypoint shim (scripts/hermes-entrypoint.sh) symlinks
       # it into the per-tool config dirs at startup, so codex and opencode each
-      # see it as their own AGENTS.md. Single source of truth.
+      # see it as their own AGENTS.md. Cursor sees the same file as
+      # /workbench/AGENTS.md when launched with /workbench as the workspace.
+      # Single source of truth.
     shm_size: "1g" # for any browser/Playwright tool calls
     cap_drop:
       - ALL

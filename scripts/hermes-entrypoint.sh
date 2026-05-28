@@ -4,10 +4,10 @@
 # Startup chores before handing off to Hermes' real entrypoint:
 #
 # 1. Symlink the global coding-agent AGENTS.md into the per-tool config dirs
-#    (codex at $HOME/.codex, opencode at $HOME/.config/opencode). They live
-#    under /opt/data because that's HOME for the hermes user (uid 10000) that
-#    actually runs the gateway and spawns sub-agents — using /root would
-#    silently fail since hermes can't read root-owned mode-700 dirs.
+#    for tools that support a global rules file (codex at $HOME/.codex,
+#    opencode at $HOME/.config/opencode). Cursor CLI reads AGENTS.md from the
+#    workspace root and nested subdirectories, so this same file is symlinked
+#    to /workbench/AGENTS.md and Cursor runs with /workbench as its workspace.
 #
 # 2. Chown the persistent state and workbench volumes to hermes. Docker named
 #    volumes can first appear as root:root, which prevents the hermes runtime
@@ -16,7 +16,7 @@
 # 3. Chown the auth subtrees to hermes. They may have been created or written
 #    by root previously (e.g. when `docker exec <assistant-container> codex
 #    login` defaulted to root). Without this, hermes-owned subprocesses can't
-#    read auth.json and the sub-agents look unauthenticated.
+#    read auth/config files and the sub-agents look unauthenticated.
 #
 # This shim runs as root (PID 1 via tini) before /opt/hermes/docker/entrypoint.sh
 # drops to the hermes user, which is the only window where chown is possible.
@@ -88,6 +88,7 @@ terminal:
   persistent_shell: true
   env_passthrough:
     - GH_TOKEN
+    - CURSOR_API_KEY
 
 dashboard:
   enabled: true
@@ -112,6 +113,17 @@ session_reset:
 EOF
 fi
 
+if [[ -f /opt/data/config.yaml ]] \
+  && ! grep -q '^[[:space:]]*-[[:space:]]*CURSOR_API_KEY[[:space:]]*$' /opt/data/config.yaml; then
+  if grep -q '^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$' /opt/data/config.yaml; then
+    sed -i '/^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$/a\    - CURSOR_API_KEY' /opt/data/config.yaml
+  elif grep -q '^[[:space:]]*env_passthrough:[[:space:]]*$' /opt/data/config.yaml; then
+    sed -i '/^[[:space:]]*env_passthrough:[[:space:]]*$/a\    - CURSOR_API_KEY' /opt/data/config.yaml
+  else
+    echo "hermes-entrypoint: WARNING could not add CURSOR_API_KEY to terminal.env_passthrough in /opt/data/config.yaml" >&2
+  fi
+fi
+
 chown -R 10000:10000 /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents /opt/data/config.yaml 2>/dev/null || true
 chown -R 10000:10000 /workbench 2>/dev/null || true
 
@@ -119,20 +131,26 @@ chown -R 10000:10000 /workbench 2>/dev/null || true
 #
 # Hermes' tools/environments/local.py::_make_run_env() overrides HOME for
 # spawned subprocesses to ${HERMES_HOME}/home/ — but ONLY when that directory
-# exists. If left enabled, codex/opencode spawned through the assistant's terminal
-# tool would write auth + state under /opt/data/home/.codex, while interactive
-# `docker compose exec -u hermes assistant codex login` writes to /opt/data/.codex.
-# Result: the assistant reports "Codex 401, not logged in" even though `codex login`
-# clearly succeeded. We don't need the isolation — hermes' real HOME
-# (/opt/data) is already persistent — so we delete the marker dir on every
-# boot to keep all codex/opencode invocations looking at the same auth path.
+# exists. If left enabled, coding agents spawned through the assistant's
+# terminal tool would write auth + state under /opt/data/home, while interactive
+# `docker compose exec -u hermes assistant <tool> login` writes to /opt/data.
+# We don't need the isolation — hermes' real HOME (/opt/data) is already
+# persistent — so we delete the marker dir on every boot to keep all coding-agent
+# invocations looking at the same auth/config paths.
 rm -rf /opt/data/home
 
-mkdir -p /opt/data/.codex /opt/data/.local/share/opencode /opt/data/.config/opencode
+mkdir -p \
+  /opt/data/.codex \
+  /opt/data/.cursor \
+  /opt/data/.local/share/cursor-agent \
+  /opt/data/.local/share/opencode \
+  /opt/data/.config/opencode
 
 if [[ -f "$RULES_SRC" ]]; then
   ln -sf "$RULES_SRC" /opt/data/.codex/AGENTS.md
   ln -sf "$RULES_SRC" /opt/data/.config/opencode/AGENTS.md
+  ln -sf "$RULES_SRC" /workbench/AGENTS.md
+  chown -h 10000:10000 /workbench/AGENTS.md 2>/dev/null || true
 else
   echo "hermes-entrypoint: WARNING $RULES_SRC missing; coding agents will run without global rules" >&2
 fi
@@ -145,7 +163,7 @@ if [[ -n "${GIT_USER_EMAIL:-}" ]]; then
   git config --system user.email "$GIT_USER_EMAIL"
 fi
 
-# Seed "yolo" defaults for the coding sub-agents. The assistant spawns codex/opencode
+# Seed "yolo" defaults for the coding sub-agents. The assistant spawns tools
 # headlessly via Telegram — there is no human at a terminal to approve prompts.
 # Defense in depth: data/AGENTS.md also tells the assistant to pass the matching CLI
 # flags explicitly, so if either layer is bypassed the other still applies.
@@ -189,9 +207,26 @@ if [[ ! -f "$OPENCODE_JSON" ]]; then
 EOF
 fi
 
+CURSOR_JSON=/opt/data/.cursor/cli-config.json
+if [[ ! -f "$CURSOR_JSON" ]]; then
+  cat > "$CURSOR_JSON" <<'EOF'
+{
+  "version": 1,
+  "editor": {
+    "vimMode": false
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  }
+}
+EOF
+fi
+
 # Best-effort: on Docker Desktop's virtiofs the chown may be a no-op because
 # UID is rewritten by the filesharing layer. Either way the hermes user ends
 # up able to read these paths because /opt/data is already mapped to hermes.
 chown -R 10000:10000 /opt/data/.codex /opt/data/.local /opt/data/.config 2>/dev/null || true
+chown -R 10000:10000 /opt/data/.cursor 2>/dev/null || true
 
 exec /opt/hermes/docker/entrypoint.sh "$@"

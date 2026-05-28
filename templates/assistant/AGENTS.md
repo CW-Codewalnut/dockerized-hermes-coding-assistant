@@ -71,24 +71,27 @@ When the user asks you to change code, follow this workflow:
    - unclear requirements;
    - anything where you need to inspect call flow, understand architecture, or choose between alternatives.
 
-   If the user named a sub-agent, use that one. If not, ask one focused question: `Use Codex or OpenCode for this?`
+   If the user named a sub-agent, use that one. If not, ask one focused question: `Use Codex, OpenCode, or Cursor for this?`
 
 5. Coding sub-agent defaults:
 
-   Before invoking either tool, check its current help output if you are unsure about flags:
+   Before invoking any tool, check its current help output if you are unsure about flags:
 
    ```bash
    codex --help
    opencode --help
+   agent --help
    ```
 
    Use these model defaults unless the user explicitly overrides them:
    - Codex CLI: `gpt-5.5` with reasoning effort `high`.
    - OpenCode CLI: `opencode-go/deepseek-v4-pro` with variant `high`.
+   - Cursor CLI: `composer-2.5`. Cursor CLI does not currently expose a separate reasoning-effort flag; do not invent one.
 
    Headless permission flags are required because there is no human at a terminal to approve prompts:
    - Codex: pass `--dangerously-bypass-approvals-and-sandbox`.
    - OpenCode: pass `--dangerously-skip-permissions`.
+   - Cursor: pass `--force`, `--trust`, and `--sandbox disabled`.
 
    Preferred invocation shapes:
 
@@ -105,22 +108,33 @@ When the user asks you to change code, follow this workflow:
      --dir /workbench/<owner>/<repo> \
      --dangerously-skip-permissions \
      "<task prompt>"
+
+   agent -p \
+     --workspace /workbench \
+     --model composer-2.5 \
+     --force \
+     --trust \
+     --sandbox disabled \
+     --output-format text \
+     "Work only in /workbench/<owner>/<repo>. <task prompt>"
    ```
 
    Codex reasoning effort is configured in `~/.codex/config.toml` and can also be overridden with `--config 'model_reasoning_effort="high"'`; do not invent a dedicated reasoning flag if the installed version does not expose one.
+   Cursor reads `/workbench/AGENTS.md` automatically because the entrypoint symlinks the shared coding-agent rules there and Cursor is invoked with `/workbench` as the workspace. Cursor also applies nested `AGENTS.md` files inside repo subdirectories when present, with more specific instructions taking precedence.
+   Cursor's dedicated ACP server mode is available as `agent acp` for custom Agent Client Protocol clients. Do not use ACP for normal Hermes delegation; the terminal/process tools should run local headless `agent -p` commands.
 
 6. Long-running coding tasks:
 
-   Codex runs often take longer than normal shell commands. For anything likely to run more than a few minutes, start it as a background terminal process instead of a short foreground command:
+   Coding-agent runs often take longer than normal shell commands. For anything likely to run more than a few minutes, start it as a background terminal process instead of a short foreground command:
 
    ```text
-   terminal(command="<codex or opencode command>", background=true, notify_on_complete=true, pty=true)
+   terminal(command="<codex, opencode, or agent command>", background=true, notify_on_complete=true, pty=true)
    process(action="poll", session_id="<session_id>")
    process(action="wait", session_id="<session_id>", timeout=7200)
    process(action="log", session_id="<session_id>")
    ```
 
-   Use `process(action="wait")` when you can block, `poll` for periodic progress checks, and `log` before summarizing or retrying. If a wait call times out, do not assume the coding agent failed; poll or read the log, then continue waiting unless the process is clearly stuck. Kill a Codex/OpenCode process only when the user asks, the process is obviously hung, or you need to stop a duplicate run you started by mistake.
+   Use `process(action="wait")` when you can block, `poll` for periodic progress checks, and `log` before summarizing or retrying. If a wait call times out, do not assume the coding agent failed; poll or read the log, then continue waiting unless the process is clearly stuck. Kill a Codex/OpenCode/Cursor process only when the user asks, the process is obviously hung, or you need to stop a duplicate run you started by mistake.
 
    The default Hermes config gives terminal commands and gateway inactivity a two-hour budget. For tasks that may exceed that, tell the user before starting and continue with background polling instead of launching duplicate coding-agent runs.
 
@@ -163,7 +177,7 @@ When the user asks you to change code, follow this workflow:
 
 | Category      | Tools                                                  |
 | ------------- | ------------------------------------------------------ |
-| Coding agents | `codex`, `opencode`                                    |
+| Coding agents | `codex`, `opencode`, `agent`/`cursor-agent`            |
 | GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists     |
 | Google        | `gws` plus Hermes' `google-workspace` skill            |
 | Git           | `git` with `gh` as credential helper                   |

@@ -342,6 +342,11 @@ echo "== Credentials =="
 prompt_env TELEGRAM_BOT_TOKEN "Telegram bot token" "" true
 prompt_env TELEGRAM_ALLOWED_USERS "Telegram allowed user IDs, comma-separated" ""
 prompt_env GH_TOKEN "GitHub classic PAT with repo/gist scopes" "" true
+if [[ -z "$(get_env CURSOR_API_KEY)" ]]; then
+  if confirm "Set Cursor API key for headless Cursor CLI now"; then
+    prompt_env CURSOR_API_KEY "Cursor API key" "" true
+  fi
+fi
 prompt_env API_SERVER_ENABLED "Enable external API server" "false"
 
 if ! docker info >/dev/null 2>&1; then
@@ -375,6 +380,14 @@ fi
 
 if confirm "Run OpenCode auth login now"; then
   docker compose exec -u hermes -it "$SERVICE" opencode auth login
+fi
+
+if [[ -z "$(get_env CURSOR_API_KEY)" ]]; then
+  if confirm "Run Cursor browser login now"; then
+    docker compose exec -u hermes -it "$SERVICE" agent login
+  fi
+else
+  echo "Cursor API key: present; skipping Cursor browser login prompt"
 fi
 
 setup_google_workspace
@@ -416,6 +429,18 @@ docker compose exec -T "$SERVICE" sh -lc '
 '
 docker compose exec -T -u hermes "$SERVICE" sh -lc 'test -s "$HOME/.codex/auth.json" && echo "Codex auth: present" || echo "Codex auth: not found"'
 docker compose exec -T -u hermes "$SERVICE" sh -lc 'find "$HOME/.local/share/opencode" "$HOME/.config/opencode" -type f 2>/dev/null | grep -q . && echo "OpenCode auth/config: present" || echo "OpenCode auth/config: not found"'
+docker compose exec -T -u hermes "$SERVICE" sh -lc '
+  set -eu
+  command -v agent >/dev/null
+  echo "Cursor CLI: $(agent --version)"
+  if test -n "${CURSOR_API_KEY:-}"; then
+    echo "Cursor auth: CURSOR_API_KEY present"
+  elif agent status >/dev/null 2>&1; then
+    echo "Cursor auth: login present"
+  else
+    echo "Cursor auth: not configured"
+  fi
+'
 docker compose exec -T -u hermes "$SERVICE" sh -lc '
   set -eu
   command -v gws >/dev/null

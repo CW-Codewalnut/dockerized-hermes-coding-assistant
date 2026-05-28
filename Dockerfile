@@ -1,4 +1,4 @@
-# Hermes Agent + coding sub-agents (Codex CLI, OpenCode CLI) + gh CLI
+# Hermes Agent + coding sub-agents (Codex CLI, OpenCode CLI, Cursor CLI) + gh CLI
 # + the usual coding-agent toolkit. Built on top of the official Nous image.
 FROM nousresearch/hermes-agent:latest
 
@@ -69,12 +69,22 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # BUN_INSTALL=/usr/local so the bun binary lands on PATH.
 RUN curl -fsSL https://bun.com/install | bash
 
-# Global agent CLIs — installed via bun for speed.
+# Global agent CLIs — installed via bun for speed where the tools are npm packages.
 #   - Codex CLI → ChatGPT Plus/Pro subscription (device-auth)
 #   - OpenCode  → same OpenCode Go subscription as the Hermes brain
 #   - gws       → Google Workspace CLI backend for Hermes' google-workspace skill
 # Bun writes global binaries to $BUN_INSTALL/bin (= /usr/local/bin), already on PATH.
 RUN bun install -g @openai/codex opencode-ai @googleworkspace/cli@0.22.5
+
+# Cursor Agent CLI — installed from Cursor's official Linux installer. The
+# installer normally writes into $HOME/.local; using /opt/cursor-agent keeps the
+# binary outside the persistent /opt/data volume while still readable by hermes.
+RUN install -d -m 0755 /opt/cursor-agent \
+       && NO_COLOR=1 HOME=/opt/cursor-agent bash -c 'curl -fsSL https://cursor.com/install | bash' \
+       && ln -sf /opt/cursor-agent/.local/bin/agent /usr/local/bin/agent \
+       && ln -sf /opt/cursor-agent/.local/bin/cursor-agent /usr/local/bin/cursor-agent \
+       && chown -R 10000:10000 /opt/cursor-agent \
+       && chmod -R u+rwX,go+rX /opt/cursor-agent
 
 # Configure git: let gh act as the credential helper for github.com so
 # `git push` works without ever materialising the PAT on disk.
@@ -106,15 +116,15 @@ RUN ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
 #
 # That trailing `home` triggers hermes_constants.get_subprocess_home() to
 # return ${HERMES_HOME}/home (it returns the path iff the dir exists). Hermes
-# then spawns codex/opencode subprocesses with HOME=/opt/data/home, which
-# misses the auth files at /opt/data/.codex/auth.json + opencode equivalent —
+# then spawns codex/opencode/cursor subprocesses with HOME=/opt/data/home, which
+# misses the auth files at /opt/data/.codex/auth.json + tool equivalents —
 # even though `codex login` correctly wrote them. Net effect: the assistant
 # reports "not logged in" no matter how many times the user actually logs in.
 #
 # We don't need per-profile subprocess HOME isolation — hermes' real HOME
 # (/opt/data) is already persistent Docker volume state. Removing the `,home` keeps
-# subprocess HOME consistent with interactive shells, so codex/opencode all
-# converge on /opt/data/.codex and /opt/data/.local/share/opencode.
+# subprocess HOME consistent with interactive shells, so all coding-agent CLIs
+# converge on persistent auth/config state under /opt/data.
 #
 # Idempotent (grep guards) and self-verifying (asserts the anchor still exists
 # upstream so a base-image refactor breaks the build loudly instead of silently).
@@ -148,13 +158,14 @@ RUN F=/opt/hermes/hermes_state.py \
 
 # Sanity-check the toolchain at build time so failures surface early.
 RUN node --version && npm --version && bun --version && uv --version \
-       && codex --version && opencode --version \
+       && codex --version && opencode --version && agent --version && cursor-agent --version \
        && gws --version && python --version \
        && gh --version && git --version \
        && rg --version | head -n1 && fd --version && jq --version || true
 
 # Entrypoint shim: wires the coding-agent global AGENTS.md into the places
-# codex and opencode look at, then hands off to the original Hermes entrypoint.
+# codex and opencode look at, prepares Cursor state, then hands off to the
+# original Hermes entrypoint.
 # See scripts/hermes-entrypoint.sh for why this is runtime and not buildtime.
 COPY templates/assistant /opt/hermes-assistant/templates/assistant
 COPY scripts/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
