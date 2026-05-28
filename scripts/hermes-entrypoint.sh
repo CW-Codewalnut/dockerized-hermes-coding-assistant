@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Hermes assistant entrypoint shim.
+# Hermes assistant container init hook.
 #
-# Startup chores before handing off to Hermes' real entrypoint:
+# Startup chores before Hermes services start:
 #
 # 1. Symlink the global coding-agent AGENTS.md into the per-tool config dirs
 #    for tools that support a global rules file (codex at $HOME/.codex,
@@ -18,8 +18,8 @@
 #    login` defaulted to root). Without this, hermes-owned subprocesses can't
 #    read auth/config files and the sub-agents look unauthenticated.
 #
-# This shim runs as root (PID 1 via tini) before /opt/hermes/docker/entrypoint.sh
-# drops to the hermes user, which is the only window where chown is possible.
+# This hook runs as root under the base image's s6 /init before Hermes services
+# start, which is the window where chown and persistent-volume setup are possible.
 set -euo pipefail
 
 TEMPLATE_DATA="/opt/hermes-assistant/templates/assistant"
@@ -228,5 +228,3 @@ fi
 # up able to read these paths because /opt/data is already mapped to hermes.
 chown -R 10000:10000 /opt/data/.codex /opt/data/.local /opt/data/.config 2>/dev/null || true
 chown -R 10000:10000 /opt/data/.cursor 2>/dev/null || true
-
-exec /opt/hermes/docker/entrypoint.sh "$@"

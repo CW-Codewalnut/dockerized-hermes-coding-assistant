@@ -32,7 +32,6 @@ RUN apt-get update \
        vim-tiny nano \
        python3 python3-pip python3-venv \
        wget unzip zip \
-       tini \
        # bubblewrap: codex CLI uses it for filesystem-sandboxed tool execution.
        # Bwrap needs unprivileged user namespaces; Docker Desktop's Linux VM has
        # them on by default. If codex still fails with `bwrap: setting up uid map`
@@ -172,13 +171,13 @@ RUN node --version && npm --version && bun --version && uv --version \
        && gh --version && git --version \
        && rg --version | head -n1 && fd --version && jq --version || true
 
-# Entrypoint shim: wires the coding-agent global AGENTS.md into the places
-# codex and opencode look at, prepares Cursor state, then hands off to the
-# original Hermes entrypoint.
-# See scripts/hermes-entrypoint.sh for why this is runtime and not buildtime.
+# Runtime init hook: wires the coding-agent global AGENTS.md into the places
+# codex/opencode/cursor look at, then lets the base image's s6 /init continue
+# normal Hermes startup. See scripts/hermes-entrypoint.sh for why this is
+# runtime and not buildtime.
 COPY templates/assistant /opt/hermes-assistant/templates/assistant
 COPY scripts/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
-RUN chmod +x /usr/local/bin/hermes-entrypoint.sh
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/hermes-entrypoint.sh"]
+RUN chmod +x /usr/local/bin/hermes-entrypoint.sh \
+       && install -D -m 0755 /usr/local/bin/hermes-entrypoint.sh /etc/cont-init.d/99-hermes-assistant-setup
 
 WORKDIR /opt/data
