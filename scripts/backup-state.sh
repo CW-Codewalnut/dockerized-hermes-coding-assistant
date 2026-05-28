@@ -39,7 +39,12 @@ docker run --rm \
     test -d /data
     test -d /workbench
     test -f /repo/.env
-    tar -czf "/backup/$OUT" -C / data workbench -C /repo .env
+    rm -rf /backup-staging
+    mkdir -p /backup-staging/data /backup-staging/workbench
+    cp -a /data/. /backup-staging/data/
+    cp -a /workbench/. /backup-staging/workbench/
+    cp /repo/.env /backup-staging/.env
+    tar -czf "/backup/$OUT" -C /backup-staging .
   '
 
 echo "Wrote $OUT"

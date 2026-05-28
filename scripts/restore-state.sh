@@ -54,6 +54,8 @@ docker run --rm \
     rm -rf /restore
     mkdir -p /restore
     tar -xzf "/backup/$BACKUP_FILE" -C /restore
+    test -d /restore/data
+    test -d /restore/workbench
     find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     find /workbench -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     cp -a /restore/data/. /data/

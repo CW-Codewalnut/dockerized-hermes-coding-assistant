@@ -151,14 +151,18 @@ RUN F=/opt/hermes/docker/entrypoint.sh \
 # process opens it at startup.
 #
 # Adding the marker lets the fallback fire on this race too — both tasks end
-# up in DELETE mode, same outcome state.db already gets on this FS. Idempotent
-# (grep guard) and self-verifying (asserts the upstream anchor still exists
-# so a base-image refactor breaks the build loudly instead of silently).
+# up in DELETE mode, same outcome state.db already gets on this FS. Newer
+# Hermes images may already include or restructure this marker list; in that
+# case, keep building instead of failing the image build.
 RUN F=/opt/hermes/hermes_state.py \
-       && grep -q '"disk i/o error",' "$F" \
-       && (grep -q '"database is locked"' "$F" \
-       || sed -i '/"disk i\/o error",/a\    "database is locked",     # Docker Desktop bind-mount race between concurrent WAL pragmas' "$F") \
-       && grep -q '"database is locked"' "$F"
+       && if grep -q '"database is locked"' "$F"; then \
+            echo "Hermes WAL fallback already handles database is locked"; \
+          elif grep -q '"disk i/o error",' "$F"; then \
+            sed -i '/"disk i\/o error",/a\    "database is locked",     # Docker Desktop bind-mount race between concurrent WAL pragmas' "$F" \
+            && grep -q '"database is locked"' "$F"; \
+          else \
+            echo "Hermes WAL fallback marker list changed; leaving as-is"; \
+          fi
 
 # Sanity-check the toolchain at build time so failures surface early.
 RUN node --version && npm --version && bun --version && uv --version \
