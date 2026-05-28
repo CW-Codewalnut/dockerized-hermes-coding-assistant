@@ -32,6 +32,7 @@ RUN apt-get update \
        vim-tiny nano \
        python3 python3-pip python3-venv \
        wget unzip zip \
+       tini \
        # bubblewrap: codex CLI uses it for filesystem-sandboxed tool execution.
        # Bwrap needs unprivileged user namespaces; Docker Desktop's Linux VM has
        # them on by default. If codex still fails with `bwrap: setting up uid map`
