@@ -65,8 +65,13 @@ run_required "runtime instructions rendered" assistant_exec sh -lc '
   test -n "${ASSISTANT_NAME:-}"
   test -n "${USER_NAME:-}"
   grep -F "# ${ASSISTANT_NAME}" /opt/data/SOUL.md >/dev/null
+  grep -F "Primary operator: **${USER_NAME}**." /opt/data/SOUL.md >/dev/null
   grep -F "The primary operator is **${USER_NAME}**." /opt/data/AGENTS.md >/dev/null
   grep -F "The primary user is **${USER_NAME}**." /opt/data/coding-agents/AGENTS.md >/dev/null
+  echo "  Assistant name: ${ASSISTANT_NAME}"
+  echo "  Assistant slug: ${ASSISTANT_SLUG:-unset}"
+  echo "  Primary operator: ${USER_NAME}"
+  echo "  Git author: ${GIT_USER_NAME:-unset} <${GIT_USER_EMAIL:-unset}>"
 '
 
 section "Telegram"
