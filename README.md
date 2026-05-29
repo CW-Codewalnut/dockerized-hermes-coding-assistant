@@ -117,7 +117,9 @@ Run smoke tests after setup or after changing auth:
 scripts/smoke-test.sh
 ```
 
-Required smoke checks cover the container, Telegram, Hermes, and the inner Docker daemon. GitHub, Codex, OpenCode, Cursor, and Google Workspace report optional warnings when auth is missing or invalid.
+Required smoke checks cover the container, Telegram, and Hermes. Inner Docker,
+GitHub, Codex, OpenCode, Cursor, and Google Workspace report optional warnings
+when unavailable or unauthenticated.
 
 Dashboard:
 

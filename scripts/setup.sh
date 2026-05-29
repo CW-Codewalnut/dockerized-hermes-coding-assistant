@@ -294,6 +294,27 @@ wait_for_inner_docker() {
   return 1
 }
 
+warn_inner_docker_degraded() {
+  cat <<'EOF'
+
+WARNING: Inner Docker did not become ready.
+Continuing setup without Docker-in-Docker. Coding-agent tasks that need docker
+inside the assistant will fail until inner Docker is fixed.
+
+After setup, inspect with:
+  scripts/compose.sh logs --tail=200 assistant
+  scripts/compose.sh exec assistant sh -lc 'tail -120 /var/log/docker.log'
+EOF
+}
+
+wait_for_inner_docker_or_warn() {
+  if wait_for_inner_docker; then
+    return 0
+  fi
+  warn_inner_docker_degraded
+  return 0
+}
+
 normalize_bool_config() {
   local key="$1"
   local label="$2"
@@ -666,7 +687,7 @@ echo
 echo "== Build and start =="
 compose up -d --build
 wait_for_container
-wait_for_inner_docker
+wait_for_inner_docker_or_warn
 
 identity_changed=false
 configure_github_and_git_identity identity_changed
@@ -675,7 +696,7 @@ if [[ "$identity_changed" == "true" ]]; then
   echo "Applying git identity to the running assistant ..."
   compose up -d --force-recreate
   wait_for_container
-  wait_for_inner_docker
+  wait_for_inner_docker_or_warn
 fi
 
 echo

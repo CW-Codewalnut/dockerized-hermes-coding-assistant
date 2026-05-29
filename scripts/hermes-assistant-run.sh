@@ -82,17 +82,24 @@ export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
 export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
 export COMPOSE_DOCKER_CLI_BUILD="${COMPOSE_DOCKER_CLI_BUILD:-1}"
 
-GATEWAY_BIN="${HERMES_GATEWAY_BIN:-}"
-if [[ -z "$GATEWAY_BIN" ]]; then
-  if command -v gateway >/dev/null 2>&1; then
-    GATEWAY_BIN="$(command -v gateway)"
-  elif [[ -x /opt/hermes/.venv/bin/gateway ]]; then
-    GATEWAY_BIN="/opt/hermes/.venv/bin/gateway"
-  else
-    echo "Hermes gateway executable not found." >&2
-    echo "Expected gateway on PATH or at /opt/hermes/.venv/bin/gateway." >&2
-    exit 127
-  fi
+if [[ -n "${HERMES_GATEWAY_BIN:-}" ]]; then
+  exec "$HERMES_GATEWAY_BIN" run
+elif command -v gateway >/dev/null 2>&1; then
+  exec "$(command -v gateway)" run
+elif [[ -x /opt/hermes/.venv/bin/gateway ]]; then
+  exec /opt/hermes/.venv/bin/gateway run
+elif [[ -x /opt/hermes/.venv/bin/hermes ]] && /opt/hermes/.venv/bin/hermes gateway --help >/dev/null 2>&1; then
+  exec /opt/hermes/.venv/bin/hermes gateway run
 fi
 
-exec "$GATEWAY_BIN" run
+cat >&2 <<'EOF'
+Hermes gateway executable not found.
+Expected one of:
+  - gateway on PATH
+  - /opt/hermes/.venv/bin/gateway
+  - /opt/hermes/.venv/bin/hermes gateway run
+
+Keeping the container alive so setup, auth, and debug commands can continue.
+EOF
+
+exec sleep infinity

@@ -117,7 +117,7 @@ run_optional "GitHub CLI auth, API, repo scope, and gist scope" hermes_exec sh -
 '
 
 section "Inner Docker"
-run_required "Docker daemon, Compose, and Buildx" hermes_exec sh -lc '
+run_optional "Docker daemon, Compose, and Buildx" hermes_exec sh -lc '
   set -eu
   if command -v timeout >/dev/null 2>&1; then
     timeout 15s docker version --format "Docker client/server: {{.Client.Version}} / {{.Server.Version}}"
