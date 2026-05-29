@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Verify the running assistant container and important external CLI auth.
+# shellcheck disable=SC2016 # Remote `sh -lc` snippets must expand in-container.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,6 +61,22 @@ hermes_exec() {
   compose exec -T -u hermes "$SERVICE" "$@"
 }
 
+timeout_prefix='
+  timeout_cmd() {
+    seconds="${SMOKE_COMMAND_TIMEOUT_SECONDS:-30}"
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "${seconds}s" "$@"
+    else
+      "$@"
+    fi
+  }
+'
+
+timed_hermes_sh() {
+  local script="$1"
+  hermes_exec sh -lc "${timeout_prefix}"$'\n'"$script"
+}
+
 section "Container"
 run_required "container responds" assistant_exec true
 run_required "runtime instructions rendered" assistant_exec sh -lc '
@@ -86,24 +103,29 @@ run_required "runtime instructions rendered" assistant_exec sh -lc '
 '
 
 section "Telegram"
-run_required "bot token present and valid" assistant_exec sh -lc '
+run_required "bot token and allowed users present" assistant_exec sh -lc '
   set -eu
   secrets_dir="${ASSISTANT_SECRETS_DIR:-/run/hermes-assistant/secrets}"
   token="$(sed -n "1p" "$secrets_dir/telegram_bot_token")"
   allowed_users="$(sed -n "1p" "$secrets_dir/telegram_allowed_users")"
   test -n "$token"
   test -n "$allowed_users"
-  ok="$(curl -fsS "https://api.telegram.org/bot${token}/getMe" | jq -r .ok)"
+'
+run_optional "bot token live check" assistant_exec sh -lc '
+  set -eu
+  secrets_dir="${ASSISTANT_SECRETS_DIR:-/run/hermes-assistant/secrets}"
+  token="$(sed -n "1p" "$secrets_dir/telegram_bot_token")"
+  ok="$(curl -fsS --max-time 15 "https://api.telegram.org/bot${token}/getMe" | jq -r .ok)"
   test "$ok" = "true"
 '
 
 section "GitHub CLI"
-run_optional "GitHub CLI auth, API, repo scope, and gist scope" hermes_exec sh -lc '
+run_optional "GitHub CLI auth, API, repo scope, and gist scope" timed_hermes_sh '
   set -eu
-  gh auth status -h github.com >/dev/null
-  login="$(gh api user --jq .login)"
+  timeout_cmd gh auth status -h github.com >/dev/null
+  login="$(timeout_cmd gh api user --jq .login)"
   echo "  GitHub account: $login"
-  scopes="$(gh api -i /user 2>/dev/null | tr -d "\r" | awk -F": " "tolower(\$1)==\"x-oauth-scopes\" {print \$2; exit}")"
+  scopes="$(timeout_cmd gh api -i /user 2>/dev/null | tr -d "\r" | awk -F": " "tolower(\$1)==\"x-oauth-scopes\" {print \$2; exit}")"
   scope_csv=",$(printf "%s" "$scopes" | tr -d " "),"
   case "$scope_csv" in
     *,repo,*) ;;
@@ -113,7 +135,7 @@ run_optional "GitHub CLI auth, API, repo scope, and gist scope" hermes_exec sh -
     *,gist,*) ;;
     *) echo "missing gist scope" >&2; exit 1 ;;
   esac
-  gh gist list --limit 1 >/dev/null
+  timeout_cmd gh gist list --limit 1 >/dev/null
 '
 
 section "Inner Docker"
@@ -134,30 +156,30 @@ section "Hermes"
 run_required "Hermes status" hermes_exec hermes status
 
 section "Codex CLI"
-run_optional "Codex version, doctor when available, and login status" hermes_exec sh -lc '
+run_optional "Codex version, doctor when available, and login status" timed_hermes_sh '
   set -eu
-  codex --version
-  if codex doctor --help >/dev/null 2>&1; then
-    codex doctor
+  timeout_cmd codex --version
+  if timeout_cmd codex doctor --help >/dev/null 2>&1; then
+    timeout_cmd codex doctor
   else
     echo "  codex doctor: not available in this installed version"
   fi
-  codex login status
+  timeout_cmd codex login status
 '
 
 section "OpenCode CLI"
-run_optional "OpenCode version, auth list, configured auth file, and model catalog" hermes_exec sh -lc '
+run_optional "OpenCode version, auth list, configured auth file, and model catalog" timed_hermes_sh '
   set -eu
-  opencode --version
-  opencode auth list
+  timeout_cmd opencode --version
+  timeout_cmd opencode auth list
   test -s "$HOME/.local/share/opencode/auth.json"
-  opencode models opencode-go >/dev/null
+  timeout_cmd opencode models opencode-go >/dev/null
 '
 
 section "Cursor CLI"
-run_optional "Cursor version, auth status, and model list" hermes_exec sh -lc '
+run_optional "Cursor version, auth status, and model list" timed_hermes_sh '
   set -eu
-  agent --version
+  timeout_cmd agent --version
   status_log="$(mktemp)"
   models_log="$(mktemp)"
   cleanup() {
@@ -166,7 +188,7 @@ run_optional "Cursor version, auth status, and model list" hermes_exec sh -lc '
   trap cleanup EXIT
 
   cursor_ready_quiet() {
-    agent status >"$status_log" 2>&1 && agent models >"$models_log" 2>&1
+    timeout_cmd agent status >"$status_log" 2>&1 && timeout_cmd agent models >"$models_log" 2>&1
   }
 
   cursor_auth_hint() {
@@ -203,11 +225,11 @@ run_optional "Cursor version, auth status, and model list" hermes_exec sh -lc '
 '
 
 section "Google Workspace"
-run_optional "gws installed and Google Workspace auth live check" hermes_exec sh -lc '
+run_optional "gws installed and Google Workspace auth live check" timed_hermes_sh '
   set -eu
-  gws --version | head -n1
+  timeout_cmd gws --version | head -n1
   test -s /opt/data/google_token.json
-  /opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check-live
+  timeout_cmd /opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check-live
 '
 
 echo

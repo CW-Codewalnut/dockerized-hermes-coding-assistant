@@ -11,23 +11,35 @@ assistant_store_init "$ROOT"
 
 YES=false
 PRUNE_SYSTEM=false
+PRUNE_BUILDER=false
 for arg in "$@"; do
   case "$arg" in
-    -y|--yes) YES=true ;;
+    -y | --yes) YES=true ;;
+    --prune-builder-cache) PRUNE_BUILDER=true ;;
     --prune-system) PRUNE_SYSTEM=true ;;
-    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      exit 2
+      ;;
   esac
 done
 
 SLUG="$(read_store_value config assistant_slug 2>/dev/null || true)"
 SLUG="${SLUG:-hermes-assistant}"
+if ! validate_assistant_slug "$SLUG"; then
+  echo "Invalid assistant slug in setup profile: $SLUG" >&2
+  echo "Run scripts/setup.sh to repair the local setup profile before wiping." >&2
+  exit 2
+fi
 
 if [[ "$YES" != true ]]; then
   echo "About to remove assistant runtime for slug '$SLUG':"
   echo "  - container: $SLUG"
   echo "  - image: ${SLUG}:local"
   echo "  - volumes: ${SLUG}_data, ${SLUG}_workbench, ${SLUG}_docker"
-  echo "  - Docker builder cache"
+  if [[ "$PRUNE_BUILDER" == true ]]; then
+    echo "  - Docker builder cache across the whole machine"
+  fi
   if [[ "$PRUNE_SYSTEM" == true ]]; then
     echo "  - unused Docker containers/images/networks across the whole machine"
   fi
@@ -36,8 +48,11 @@ if [[ "$YES" != true ]]; then
   echo "  - source files"
   read -rp "Continue? [y/N] " ans
   case "$ans" in
-    y|Y|yes|YES|Yes) ;;
-    *) echo "Aborted."; exit 1 ;;
+    y | Y | yes | YES | Yes) ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
   esac
 fi
 
@@ -58,9 +73,11 @@ echo "[4/5] Removing assistant volumes ..."
 docker volume rm \
   "${SLUG}_data" "${SLUG}_workbench" "${SLUG}_docker" 2>&1 | sed 's/^/    /' || true
 
-echo
-echo "[5/5] Pruning Docker builder cache ..."
-docker builder prune -af 2>&1 | tail -20 | sed 's/^/    /'
+if [[ "$PRUNE_BUILDER" == true ]]; then
+  echo
+  echo "[5/5] Pruning Docker builder cache ..."
+  docker builder prune -af 2>&1 | tail -20 | sed 's/^/    /'
+fi
 
 if [[ "$PRUNE_SYSTEM" == true ]]; then
   echo

@@ -9,9 +9,9 @@
 #    repo directory and relies on repo-local Cursor rules instead of a shared
 #    /workbench-level rule file.
 #
-# 2. Chown the persistent state and workbench volumes to hermes. Docker named
-#    volumes can first appear as root:root, which prevents the hermes runtime
-#    user from creating /workbench/<owner>/<repo> checkouts.
+# 2. Chown the persistent state and workbench volume roots to hermes. Docker
+#    named volumes can first appear as root:root, which prevents the hermes
+#    runtime user from creating /workbench/<owner>/<repo> checkouts.
 #
 # 3. Chown the auth subtrees to hermes. They may have been created or written
 #    by root previously (e.g. when `docker exec <assistant-container> codex
@@ -27,6 +27,24 @@ RULES_SRC="/opt/data/coding-agents/AGENTS.md"
 CONFIG_DIR="${ASSISTANT_CONFIG_DIR:-/run/hermes-assistant/config}"
 
 mkdir -p /opt/data /opt/data/coding-agents /workbench
+
+chown_path_if_needed() {
+  local path
+  for path in "$@"; do
+    [[ -e "$path" ]] || continue
+    if [[ "$(stat -c '%u:%g' "$path" 2>/dev/null || true)" != "10000:10000" ]]; then
+      chown -h 10000:10000 "$path" 2>/dev/null || true
+    fi
+  done
+}
+
+chown_children_if_needed() {
+  local path
+  for path in "$@"; do
+    [[ -d "$path" ]] || continue
+    find "$path" -mindepth 1 -maxdepth 1 \( ! -user 10000 -o ! -group 10000 \) -exec chown -h 10000:10000 {} + 2>/dev/null || true
+  done
+}
 
 render_template() {
   local src="$1"
@@ -54,7 +72,7 @@ runtime_env() {
   local profile_key=""
   value="${!key:-}"
   if [[ -z "$value" && -f "/run/s6/container_environment/$key" ]]; then
-    value="$(tr -d '\000' < "/run/s6/container_environment/$key")"
+    value="$(tr -d '\000' <"/run/s6/container_environment/$key")"
   fi
   if [[ -z "$value" ]]; then
     case "$key" in
@@ -66,7 +84,7 @@ runtime_env() {
       DOCKERD_STORAGE_DRIVER) profile_key="dockerd_storage_driver" ;;
     esac
     if [[ -n "$profile_key" && -f "$CONFIG_DIR/$profile_key" ]]; then
-      IFS= read -r value < "$CONFIG_DIR/$profile_key" || value=""
+      IFS= read -r value <"$CONFIG_DIR/$profile_key" || value=""
     fi
   fi
   printf '%s' "${value:-$fallback}"
@@ -90,7 +108,7 @@ if [[ -f "$TEMPLATE_DATA/coding-agents/AGENTS.md" ]]; then
 fi
 
 if [[ ! -f /opt/data/config.yaml ]]; then
-  cat > /opt/data/config.yaml <<'EOF'
+  cat >/opt/data/config.yaml <<'EOF'
 agent:
   max_turns: 150
   gateway_timeout: 7200
@@ -130,8 +148,7 @@ session_reset:
 EOF
 fi
 
-chown -R 10000:10000 /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents /opt/data/config.yaml 2>/dev/null || true
-chown -R 10000:10000 /workbench 2>/dev/null || true
+chown_path_if_needed /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents "$RULES_SRC" /opt/data/config.yaml /workbench
 
 # Disable Hermes' per-profile subprocess HOME isolation.
 #
@@ -143,7 +160,15 @@ chown -R 10000:10000 /workbench 2>/dev/null || true
 # We don't need the isolation — hermes' real HOME (/opt/data) is already
 # persistent — so we delete the marker dir on every boot to keep all coding-agent
 # invocations looking at the same auth/config paths.
-rm -rf /opt/data/home
+if [[ -d /opt/data/home ]]; then
+  if find /opt/data/home -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+    legacy_home="/opt/data/home.disabled.$(date -u +%Y%m%d%H%M%S)"
+    mv /opt/data/home "$legacy_home"
+    echo "hermes-entrypoint: moved legacy subprocess HOME to $legacy_home" >&2
+  else
+    rmdir /opt/data/home 2>/dev/null || true
+  fi
+fi
 
 mkdir -p \
   /opt/data/.codex \
@@ -180,7 +205,7 @@ fi
 # To reset to fresh defaults: delete the file and restart the container.
 CODEX_TOML=/opt/data/.codex/config.toml
 if [[ ! -f "$CODEX_TOML" ]]; then
-  cat > "$CODEX_TOML" <<'EOF'
+  cat >"$CODEX_TOML" <<'EOF'
 # Hermes assistant managed defaults for headless codex invocations.
 #
 # Yolo permissions — required because the assistant spawns codex with no human at a
@@ -199,7 +224,7 @@ fi
 
 OPENCODE_JSON=/opt/data/.config/opencode/opencode.json
 if [[ ! -f "$OPENCODE_JSON" ]]; then
-  cat > "$OPENCODE_JSON" <<'EOF'
+  cat >"$OPENCODE_JSON" <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "opencode-go/deepseek-v4-pro",
@@ -227,7 +252,7 @@ fi
 
 CURSOR_JSON=/opt/data/.cursor/cli-config.json
 if [[ ! -f "$CURSOR_JSON" ]]; then
-  cat > "$CURSOR_JSON" <<'EOF'
+  cat >"$CURSOR_JSON" <<'EOF'
 {
   "version": 1,
   "editor": {
@@ -244,5 +269,18 @@ fi
 # Best-effort: on Docker Desktop's virtiofs the chown may be a no-op because
 # UID is rewritten by the filesharing layer. Either way the hermes user ends
 # up able to read these paths because /opt/data is already mapped to hermes.
-chown -R 10000:10000 /opt/data/.codex /opt/data/.local /opt/data/.config 2>/dev/null || true
-chown -R 10000:10000 /opt/data/.cursor 2>/dev/null || true
+chown_path_if_needed \
+  /opt/data/.codex \
+  /opt/data/.config \
+  /opt/data/.config/opencode \
+  /opt/data/.local \
+  /opt/data/.local/share \
+  /opt/data/.local/share/opencode \
+  /opt/data/.cursor \
+  /opt/data/.local/share/cursor-agent
+chown_children_if_needed \
+  /opt/data/.codex \
+  /opt/data/.config/opencode \
+  /opt/data/.local/share/opencode \
+  /opt/data/.cursor \
+  /opt/data/.local/share/cursor-agent

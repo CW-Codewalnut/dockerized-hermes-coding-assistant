@@ -184,32 +184,42 @@ This applies to commit bodies, PR descriptions, PR reviews, issue comments, publ
 
 ## Backup, Restore, Wipe
 
-Create a backup with setup profile config but without known auth stores:
+Create a backup with setup profile config only:
 
 ```bash
 scripts/backup-state.sh
 ```
 
-Create a full sensitive backup:
+Include runtime data, repo checkouts, or inner Docker state explicitly:
 
 ```bash
-scripts/backup-state.sh --include-secrets
+scripts/backup-state.sh --include-secrets --include-data --include-workbench --include-docker
+```
+
+Create a sensitive auth backup:
+
+```bash
+scripts/backup-state.sh --include-data --include-secrets
 ```
 
 Restore:
 
 ```bash
-scripts/restore-state.sh <backup.tar.gz>
+scripts/restore-state.sh --yes <backup.tar.gz>
 scripts/setup.sh
 ```
 
-Default backups include the non-secret setup profile, Hermes state, repo checkouts, and inner Docker state, but remove setup secrets and known auth stores such as GitHub, Codex, OpenCode, Cursor, and Google credentials. Full backups can contain credentials and can be large.
+Default backups include only the non-secret setup profile. Runtime data,
+workbench checkouts, and inner Docker layers require `--include-secrets`
+because they can contain credentials and can be large. Inspect archives before
+sharing.
 
 Wipe this assistant's Docker footprint:
 
 ```bash
 scripts/clean-wipe.sh
 scripts/clean-wipe.sh -y
+scripts/clean-wipe.sh --prune-builder-cache
 ```
 
 Also prune unused Docker objects across the machine:

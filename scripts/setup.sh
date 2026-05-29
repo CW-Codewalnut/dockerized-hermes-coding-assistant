@@ -64,10 +64,20 @@ run_with_optional_interrupt() {
   OPTIONAL_STEP_ACTIVE=true
   OPTIONAL_STEP_INTERRUPTED=false
   OPTIONAL_STEP_NAME="$label"
+
+  # Capture the optional step status in the parent while preserving errexit
+  # inside the step itself. Calling shell functions from an `if`/`||` condition
+  # disables errexit throughout that function body, which hid real setup errors.
   set +e
-  "$@"
+  (
+    set -Eeuo pipefail
+    trap setup_interrupt INT TERM
+    trap cleanup_setup_temps EXIT
+    "$@"
+  )
   status=$?
   set -e
+
   OPTIONAL_STEP_ACTIVE=false
   OPTIONAL_STEP_NAME=""
 
@@ -170,10 +180,10 @@ read_google_client_secret_json() {
   local first_line="${2:-}"
   local line
 
-  : > "$output_path"
+  : >"$output_path"
   setup_disable_echo
   if [[ -n "$first_line" ]]; then
-    printf '%s\n' "$first_line" >> "$output_path"
+    printf '%s\n' "$first_line" >>"$output_path"
   fi
 
   while ! json_file_is_valid "$output_path"; do
@@ -181,7 +191,7 @@ read_google_client_secret_json() {
       break
     fi
     [[ "$line" == "END_GOOGLE_JSON" ]] && break
-    printf '%s\n' "$line" >> "$output_path"
+    printf '%s\n' "$line" >>"$output_path"
   done
   setup_enable_echo
   echo
@@ -246,7 +256,7 @@ container_running() {
   id="$(container_id)"
   [[ -n "$id" ]] || return 1
   state="$(container_state "$id")"
-  read -r running restarting _ <<< "$state"
+  read -r running restarting _ <<<"$state"
   [[ "$running" == "true" && "$restarting" != "true" ]]
 }
 
@@ -295,11 +305,11 @@ compose_exec() {
       -T)
         shift
         ;;
-      -u|--user|-e|--env|-w|--workdir)
+      -u | --user | -e | --env | -w | --workdir)
         docker_args+=("$1" "$2")
         shift 2
         ;;
-      --user=*|--env=*|--workdir=*)
+      --user=* | --env=* | --workdir=*)
         docker_args+=("$1")
         shift
         ;;
@@ -435,8 +445,8 @@ normalize_bool_config() {
   fi
 
   case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
-    true|yes|y|1) write_store_value config "$key" "true" ;;
-    false|no|n|0|"") write_store_value config "$key" "false" ;;
+    true | yes | y | 1) write_store_value config "$key" "true" ;;
+    false | no | n | 0 | "") write_store_value config "$key" "false" ;;
     *)
       echo "$label must be true or false."
       rm -f "$(store_path config "$key")"
@@ -620,7 +630,7 @@ configure_github_and_git_identity() {
         echo "GitHub CLI auth: configured"
         derive_git_identity_from_github "$identity_changed_var" || true
       elif [[ "$status" -eq 130 ]]; then
-        echo "GitHub CLI auth skipped."
+        :
       else
         echo "GitHub CLI auth failed; continuing without GitHub auth." >&2
       fi
@@ -637,6 +647,7 @@ configure_github_and_git_identity() {
 setup_google_workspace_impl() {
   local gsetup container_secret client_secret_path auth_url oauth_callback
   local client_secret_source temp_secret_path
+  # shellcheck disable=SC2016 # Expanded inside the container by `sh -lc`.
   gsetup='/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
   container_secret="/opt/data/.hermes-google-client-secret.json.tmp"
   temp_secret_path=""
@@ -644,7 +655,10 @@ setup_google_workspace_impl() {
   echo
   echo "== Google Workspace =="
 
-  compose exec -T -u hermes "$SERVICE" sh -lc 'command -v gws >/dev/null'
+  if ! compose exec -T -u hermes "$SERVICE" sh -lc 'command -v gws >/dev/null'; then
+    echo "Google Workspace CLI is not installed in the assistant container; skipping Google Workspace setup." >&2
+    return 0
+  fi
 
   if compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check" >/dev/null 2>&1; then
     echo "Google Workspace auth: already configured"
@@ -705,7 +719,7 @@ EOF
         fi
         client_secret_path="$temp_secret_path"
         ;;
-      paste|p)
+      paste | p)
         setup_enable_echo
         temp_secret_path="$(mktemp)"
         SETUP_TEMP_FILES+=("$temp_secret_path")
@@ -723,7 +737,7 @@ EOF
         fi
         client_secret_path="$temp_secret_path"
         ;;
-      path|file|f)
+      path | file | f)
         setup_enable_echo
         while true; do
           read -r -p "Path to OAuth Desktop client JSON (blank to skip): " client_secret_path
@@ -737,7 +751,7 @@ EOF
           echo "File not found: $client_secret_path"
         done
         ;;
-      skip|s)
+      skip | s)
         setup_enable_echo
         print_google_workspace_skip_instructions
         return 0
@@ -751,9 +765,9 @@ EOF
     esac
 
     SETUP_CONTAINER_TEMP_SECRET="$container_secret"
-    compose cp "$client_secret_path" "$SERVICE:$container_secret"
+    compose cp "$client_secret_path" "$SERVICE:$container_secret" || return 1
     rm -f "$temp_secret_path"
-    compose exec -T "$SERVICE" sh -lc "chown 10000:10000 '$container_secret' && chmod 600 '$container_secret'"
+    compose exec -T "$SERVICE" sh -lc "chown 10000:10000 '$container_secret' && chmod 600 '$container_secret'" || return 1
     if ! compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --client-secret '$container_secret'"; then
       compose exec -T "$SERVICE" rm -f "$container_secret"
       SETUP_CONTAINER_TEMP_SECRET=""

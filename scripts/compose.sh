@@ -7,25 +7,52 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/setup-store.sh"
 assistant_store_init "$ROOT"
 
-subcommand=""
-for arg in "$@"; do
-  case "$arg" in
-    -*) ;;
-    *) subcommand="$arg"; break ;;
-  esac
-done
+DOCKER_BIN="${DOCKER_BIN:-docker}"
 
-if [[ ! -d "$ASSISTANT_CONFIG_DIR" ]]; then
+compose_subcommand() {
+  local -a args=("$@")
+  local arg_index arg
+  for ((arg_index = 0; arg_index < ${#args[@]}; arg_index++)); do
+    arg="${args[$arg_index]}"
+    case "$arg" in
+      -f | --file | -p | --project-name | --profile | --project-directory | --env-file | --ansi | --parallel | --progress)
+        arg_index=$((arg_index + 1))
+        ;;
+      -f?* | -p?*)
+        ;;
+      --file=* | --project-name=* | --profile=* | --project-directory=* | --env-file=* | --ansi=* | --parallel=* | --progress=*)
+        ;;
+      --all-resources | --compatibility | --dry-run)
+        ;;
+      --)
+        if ((arg_index + 1 < ${#args[@]})); then
+          printf '%s\n' "${args[$((arg_index + 1))]}"
+        fi
+        return 0
+        ;;
+      -*)
+        ;;
+      *)
+        printf '%s\n' "$arg"
+        return 0
+        ;;
+    esac
+  done
+}
+
+subcommand="$(compose_subcommand "$@")"
+
+profile_required=false
+case "$subcommand" in
+  build | create | run | scale | up | watch)
+    profile_required=true
+    ;;
+esac
+
+if [[ ! -d "$ASSISTANT_CONFIG_DIR" && "$profile_required" == "true" ]]; then
   echo "No setup profile found. Run scripts/setup.sh first." >&2
   exit 1
 fi
-
-profile_required=true
-case "$subcommand" in
-  config|cp|down|exec|images|logs|ls|ps|pull|rm|stop|top|version)
-    profile_required=false
-    ;;
-esac
 
 missing=()
 warnings=()
@@ -50,22 +77,24 @@ require_secret() {
   fi
 }
 
-require_config assistant_name
-require_config assistant_slug
-require_config user_name
-require_config branch_prefix
-require_config dashboard_port
-require_config api_port
-require_config api_server_enabled
-require_config dockerd_storage_driver
-require_secret telegram_bot_token
-require_secret telegram_allowed_users
-warn_config git_user_name
-warn_config git_user_email
+if [[ -d "$ASSISTANT_CONFIG_DIR" ]]; then
+  require_config assistant_name
+  require_config assistant_slug
+  require_config user_name
+  require_config branch_prefix
+  require_config dashboard_port
+  require_config api_port
+  require_config api_server_enabled
+  require_config dockerd_storage_driver
+  require_secret telegram_bot_token
+  require_secret telegram_allowed_users
+  warn_config git_user_name
+  warn_config git_user_email
 
-api_enabled="$(read_store_value config api_server_enabled 2>/dev/null || true)"
-if [[ "$api_enabled" == "true" ]]; then
-  require_secret api_server_key
+  api_enabled="$(read_store_value config api_server_enabled 2>/dev/null || true)"
+  if [[ "$api_enabled" == "true" ]]; then
+    require_secret api_server_key
+  fi
 fi
 
 if [[ "$profile_required" == "true" && "${#missing[@]}" -gt 0 ]]; then
@@ -80,6 +109,8 @@ if [[ "$profile_required" == "true" && "${#warnings[@]}" -gt 0 ]]; then
 fi
 
 cd "$ROOT"
-grant_runtime_store_access
+if [[ "$profile_required" == "true" ]]; then
+  grant_runtime_store_access
+fi
 load_compose_env
-exec docker compose "$@"
+exec "$DOCKER_BIN" compose "$@"

@@ -22,26 +22,41 @@ ensure_store_dirs() {
 grant_runtime_store_access() {
   local dirs=("$ASSISTANT_STORE_ROOT/.assistant" "$ASSISTANT_CONFIG_DIR" "$ASSISTANT_SECRETS_DIR")
   local file
+  local acl_failed=false
 
   [[ -d "$ASSISTANT_STORE_ROOT/.assistant" ]] || return 0
+  for file in "$ASSISTANT_SECRETS_DIR"/*; do
+    [[ -f "$file" ]] || continue
+    chmod 600 "$file" 2>/dev/null || true
+  done
 
   if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m "u:${ASSISTANT_RUNTIME_UID}:rx" "${dirs[@]}" 2>/dev/null || true
+    setfacl -m "u:${ASSISTANT_RUNTIME_UID}:rx" "${dirs[@]}" 2>/dev/null || acl_failed=true
     for file in "$ASSISTANT_CONFIG_DIR"/* "$ASSISTANT_SECRETS_DIR"/*; do
       [[ -f "$file" ]] || continue
-      setfacl -m "u:${ASSISTANT_RUNTIME_UID}:r" "$file" 2>/dev/null || true
+      setfacl -m "u:${ASSISTANT_RUNTIME_UID}:r" "$file" 2>/dev/null || acl_failed=true
     done
-  else
-    if [[ "$ASSISTANT_WARNED_NO_SETFACL" != "true" ]]; then
-      echo "Warning: setfacl not found; using owner-private dirs with runtime-readable profile files." >&2
-      ASSISTANT_WARNED_NO_SETFACL=true
-    fi
-    chmod o+x "${dirs[@]}" 2>/dev/null || true
-    for file in "$ASSISTANT_CONFIG_DIR"/* "$ASSISTANT_SECRETS_DIR"/*; do
-      [[ -f "$file" ]] || continue
-      chmod o+r "$file" 2>/dev/null || true
-    done
+    [[ "$acl_failed" != "true" ]] && return 0
   fi
+
+  if [[ "$ASSISTANT_WARNED_NO_SETFACL" != "true" ]]; then
+    if command -v setfacl >/dev/null 2>&1; then
+      echo "Warning: setfacl failed; secrets remain owner-only. Check filesystem ACL support if the container cannot read setup secrets." >&2
+    else
+      echo "Warning: setfacl not found; secrets remain owner-only. Install acl if the container cannot read setup secrets." >&2
+    fi
+    ASSISTANT_WARNED_NO_SETFACL=true
+  fi
+  chmod o+x "${dirs[@]}" 2>/dev/null || true
+  for file in "$ASSISTANT_CONFIG_DIR"/*; do
+    [[ -f "$file" ]] || continue
+    chmod o+r "$file" 2>/dev/null || true
+  done
+}
+
+validate_assistant_slug() {
+  local slug="$1"
+  [[ "$slug" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]
 }
 
 store_path() {
@@ -50,7 +65,10 @@ store_path() {
   case "$kind" in
     config) printf '%s/%s\n' "$ASSISTANT_CONFIG_DIR" "$key" ;;
     secret) printf '%s/%s\n' "$ASSISTANT_SECRETS_DIR" "$key" ;;
-    *) echo "Unknown store kind: $kind" >&2; return 2 ;;
+    *)
+      echo "Unknown store kind: $kind" >&2
+      return 2
+      ;;
   esac
 }
 
@@ -60,7 +78,7 @@ read_store_value() {
   local path value
   path="$(store_path "$kind" "$key")"
   [[ -f "$path" ]] || return 1
-  IFS= read -r value < "$path" || value=""
+  IFS= read -r value <"$path" || value=""
   printf '%s\n' "$value"
 }
 
@@ -74,7 +92,7 @@ write_store_value() {
   mode=600
   [[ "$kind" == "config" ]] && mode=644
   umask 077
-  printf '%s\n' "$value" > "$path"
+  printf '%s\n' "$value" >"$path"
   chmod "$mode" "$path"
   grant_runtime_store_access
 }
@@ -88,9 +106,9 @@ has_store_value() {
 }
 
 slugify() {
-  printf '%s' "$1" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
+  printf '%s' "$1" |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
 }
 
 confirm() {
@@ -98,7 +116,7 @@ confirm() {
   local ans
   read -r -p "$prompt [Y/n]: " ans
   case "$ans" in
-    n|N|no|NO|No) return 1 ;;
+    n | N | no | NO | No) return 1 ;;
     *) return 0 ;;
   esac
 }

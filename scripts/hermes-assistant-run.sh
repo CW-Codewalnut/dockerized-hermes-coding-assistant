@@ -11,7 +11,7 @@ read_profile_file() {
   local path="$dir/$key"
   local value=""
   [[ -f "$path" ]] || return 1
-  IFS= read -r value < "$path" || value=""
+  IFS= read -r value <"$path" || value=""
   printf '%s\n' "$value"
 }
 
