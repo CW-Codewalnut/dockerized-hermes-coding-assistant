@@ -334,8 +334,7 @@ prompt_env GIT_USER_EMAIL "Git author email" ""
 prompt_env BRANCH_PREFIX "Task branch prefix" "$(get_env ASSISTANT_SLUG)"
 prompt_env DASHBOARD_PORT "Dashboard localhost port" "9119"
 prompt_env API_PORT "API localhost port" "8642"
-prompt_env DOCKER_MEMORY "Docker memory limit" "4G"
-prompt_env DOCKER_CPUS "Docker CPU limit" "12.0"
+prompt_env DOCKERD_STORAGE_DRIVER "Inner Docker storage driver" "overlay2"
 
 echo
 echo "== Credentials =="
@@ -368,6 +367,15 @@ for _ in {1..90}; do
 done
 docker compose exec -T "$SERVICE" true >/dev/null
 
+echo "Waiting for inner Docker daemon ..."
+for _ in {1..90}; do
+  if docker compose exec -T -u hermes "$SERVICE" docker info >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+docker compose exec -T -u hermes "$SERVICE" docker info >/dev/null
+
 echo
 echo "== Interactive logins =="
 if confirm "Run Hermes model setup now"; then
@@ -393,66 +401,23 @@ fi
 setup_google_workspace
 
 echo
-echo "== Verification =="
-docker compose exec -T "$SERVICE" sh -lc '
-  set -eu
-  test -n "${TELEGRAM_BOT_TOKEN:-}" && echo "Telegram token: present" || { echo "Telegram token: missing"; exit 1; }
-  test -n "${TELEGRAM_ALLOWED_USERS:-}" && echo "Telegram allowed users: present" || { echo "Telegram allowed users: missing"; exit 1; }
-  test -n "${GH_TOKEN:-}" && echo "GitHub token: present" || { echo "GitHub token: missing"; exit 1; }
-  ! grep -R "<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>" /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
-  ! grep -R "Replace these placeholders before running the assistant:" /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
-  echo "Runtime instruction placeholders: replaced"
-'
-
-docker compose exec -T "$SERVICE" sh -lc '
-  if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    ok="$(curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq -r .ok)"
-    test "$ok" = "true" && echo "Telegram token: valid"
-  fi
-'
-
-docker compose exec -T "$SERVICE" gh auth status
-docker compose exec -T "$SERVICE" sh -lc '
-  set -eu
-  scopes="$(gh api -i /user 2>/dev/null | tr -d "\r" | awk -F": " "tolower(\$1)==\"x-oauth-scopes\" {print \$2; exit}")"
-  case ",$scopes," in
-    *", gist,"*|*",gist,"*|*", gist"*)
-      echo "GitHub gist scope: present"
-      ;;
-    *)
-      echo "GitHub gist scope: missing; regenerate GH_TOKEN with the gist scope" >&2
-      exit 1
-      ;;
-  esac
-  gh gist list --limit 1 >/dev/null
-  echo "GitHub gist read: ok"
-'
-docker compose exec -T -u hermes "$SERVICE" sh -lc 'test -s "$HOME/.codex/auth.json" && echo "Codex auth: present" || echo "Codex auth: not found"'
-docker compose exec -T -u hermes "$SERVICE" sh -lc 'find "$HOME/.local/share/opencode" "$HOME/.config/opencode" -type f 2>/dev/null | grep -q . && echo "OpenCode auth/config: present" || echo "OpenCode auth/config: not found"'
-docker compose exec -T -u hermes "$SERVICE" sh -lc '
-  set -eu
-  command -v agent >/dev/null
-  echo "Cursor CLI: $(agent --version)"
-  if test -n "${CURSOR_API_KEY:-}"; then
-    echo "Cursor auth: CURSOR_API_KEY present"
-  elif agent status >/dev/null 2>&1; then
-    echo "Cursor auth: login present"
-  else
-    echo "Cursor auth: not configured"
-  fi
-'
-docker compose exec -T -u hermes "$SERVICE" sh -lc '
-  set -eu
-  command -v gws >/dev/null
-  echo "Google Workspace CLI: $(gws --version | head -n1)"
-  if /opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check >/dev/null 2>&1; then
-    echo "Google Workspace auth: present"
-  else
-    echo "Google Workspace auth: not configured"
-  fi
-'
-docker compose exec -T -u hermes "$SERVICE" hermes status || true
+echo "== Smoke tests =="
+smoke_status=0
+scripts/smoke-test.sh "$SERVICE" || smoke_status=$?
 
 echo
-echo "Setup complete."
-echo "Dashboard: http://localhost:$(get_env DASHBOARD_PORT)"
+case "$smoke_status" in
+  0)
+    echo "Setup complete."
+    echo "Dashboard: http://localhost:$(get_env DASHBOARD_PORT)"
+    ;;
+  2)
+    echo "Setup finished, but optional smoke checks need attention."
+    echo "Fix the warnings above, then rerun: scripts/smoke-test.sh"
+    echo "Dashboard: http://localhost:$(get_env DASHBOARD_PORT)"
+    ;;
+  *)
+    echo "Setup failed required smoke tests. Fix the failures above, then rerun: scripts/smoke-test.sh" >&2
+    exit "$smoke_status"
+    ;;
+esac
