@@ -84,8 +84,9 @@ run_required "bot token present and valid" assistant_exec sh -lc '
 '
 
 section "GitHub CLI"
-run_required "GH_TOKEN auth, API, repo scope, and gist scope" assistant_exec sh -lc '
+run_required "GitHub token auth, API, repo scope, and gist scope" assistant_exec sh -lc '
   set -eu
+  test -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   gh auth status -h github.com >/dev/null
   login="$(gh api user --jq .login)"
   echo "  GitHub account: $login"

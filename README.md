@@ -77,7 +77,7 @@ Important `.env` values:
 | `ASSISTANT_NAME`, `ASSISTANT_SLUG`, `USER_NAME`    | Assistant identity and Docker naming.                                          |
 | `GIT_USER_NAME`, `GIT_USER_EMAIL`, `BRANCH_PREFIX` | Git author identity and branch prefix for workbench repos.                     |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`     | Telegram access.                                                               |
-| `GH_TOKEN`                                         | GitHub auth for `gh`, git push, PRs, issues, and gists.                        |
+| `GH_TOKEN`                                         | GitHub auth for `gh`, git push, PRs, issues, and gists. `GITHUB_TOKEN` is accepted as a setup alias. |
 | `CURSOR_API_KEY`                                   | Optional Cursor Agent auth for headless `agent -p`.                            |
 | `DOCKERD_STORAGE_DRIVER`                           | Inner Docker storage driver. Keep `overlay2` unless setup tells you otherwise. |
 

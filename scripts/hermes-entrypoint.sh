@@ -90,6 +90,7 @@ terminal:
   persistent_shell: true
   env_passthrough:
     - GH_TOKEN
+    - GITHUB_TOKEN
     - CURSOR_API_KEY
     - DOCKER_HOST
     - DOCKER_BUILDKIT
@@ -116,6 +117,12 @@ session_reset:
   idle_minutes: 1440
   at_hour: 4
 EOF
+fi
+
+if [[ -f /opt/data/config.yaml ]] &&
+  ! grep -Eq '^[[:space:]]*-[[:space:]]*GITHUB_TOKEN[[:space:]]*$' /opt/data/config.yaml &&
+  grep -Eq '^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$' /opt/data/config.yaml; then
+  sed -i '/^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$/a\    - GITHUB_TOKEN' /opt/data/config.yaml
 fi
 
 chown -R 10000:10000 /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents /opt/data/config.yaml 2>/dev/null || true

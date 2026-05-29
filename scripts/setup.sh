@@ -70,6 +70,19 @@ prompt_env() {
   [[ -n "$input" ]] && set_env "$key" "$input"
 }
 
+prompt_github_token() {
+  local gh_token github_token
+  gh_token="$(get_env GH_TOKEN)"
+  github_token="$(get_env GITHUB_TOKEN)"
+
+  if [[ -z "$gh_token" && -n "$github_token" ]]; then
+    set_env GH_TOKEN "$github_token"
+    return 0
+  fi
+
+  prompt_env GH_TOKEN "GitHub classic PAT with repo/gist scopes" "" true
+}
+
 confirm() {
   local prompt="$1"
   local ans
@@ -340,7 +353,7 @@ echo
 echo "== Credentials =="
 prompt_env TELEGRAM_BOT_TOKEN "Telegram bot token" "" true
 prompt_env TELEGRAM_ALLOWED_USERS "Telegram allowed user IDs, comma-separated" ""
-prompt_env GH_TOKEN "GitHub classic PAT with repo/gist scopes" "" true
+prompt_github_token
 if [[ -z "$(get_env CURSOR_API_KEY)" ]]; then
   if confirm "Set Cursor API key for headless Cursor CLI now"; then
     prompt_env CURSOR_API_KEY "Cursor API key" "" true
