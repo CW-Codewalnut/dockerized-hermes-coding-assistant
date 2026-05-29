@@ -6,21 +6,30 @@ The primary operator is **<USER_NAME>**. Commits made inside this container shou
 
 ## Filesystem layout
 
-| Path          | Backing store           | Permissions | Purpose                                                                   |
-| ------------- | ----------------------- | ----------- | ------------------------------------------------------------------------- |
-| `/workbench/` | Docker workbench volume | read-write  | Persistent project checkouts, similar to a host `~/codes` folder.         |
-| `/opt/data/`  | Docker data volume      | read-write  | Assistant state: config, memories, skills, logs, and sub-agent auth dirs. |
-| `/tmp/`       | Container tmpfs         | read-write  | Ephemeral files. Wiped on restart.                                        |
+| Path               | Backing store            | Permissions | Purpose                                                                   |
+| ------------------ | ------------------------ | ----------- | ------------------------------------------------------------------------- |
+| `/workbench/`      | Docker workbench volume  | read-write  | Persistent project checkouts, similar to a host `~/codes` folder.         |
+| `/opt/data/`       | Docker data volume       | read-write  | Assistant state: config, memories, skills, logs, and sub-agent auth dirs. |
+| `/var/lib/docker/` | Docker daemon volume     | read-write  | Inner Docker daemon images, containers, volumes, and build cache.         |
+| `/tmp/`            | Container writable layer | read-write  | Temporary files. Do not store durable work here.                          |
 
-The host's source-code folders are not mounted. Keep coding projects under `/workbench`, reuse them across tasks, and treat GitHub as the remote source of truth.
+Keep coding projects under `/workbench`, keep canonical clones as remote-tracking bases, and do task work in fresh git worktrees.
+
+## Development runtime
+
+- This container is intentionally a high-power development environment with passwordless `sudo` for the `hermes` user.
+- A real Docker daemon runs inside the assistant. Use normal `docker`, `docker compose`, and `docker buildx` commands from repo directories; do not assume a host Docker socket is mounted.
+- Because Docker is in-container, repo bind mounts work normally. For example, `docker run --rm -v "$PWD":/app -w /app node:lts npm test` sees the same `/workbench/<owner>/<repo>` files as the agent.
+- If a repo needs a new package that is not preinstalled, install it and mention it in the final summary.
 
 ## Project workspace rule
 
-- All repo work happens inside `/workbench/<owner>/<repo>/`.
-- Reuse existing checkouts. Do not create duplicate clones for every task.
-- Clone only when the repo is missing locally.
-- Fetch before starting work so the local checkout knows about the current remote state.
-- Create a new task branch for edits unless the user explicitly asks to use an existing branch.
+- Keep the canonical clone at `/workbench/<owner>/<repo>/`. Use it for fetching, remote metadata, and as the base for git worktrees.
+- Do not perform task edits directly in the canonical clone unless the user explicitly asks to reuse that exact checkout.
+- For every coding task that needs repo files, create a fresh git worktree under `/workbench/<owner>/<repo>-worktrees/<short-task-slug>/` with a fresh task branch.
+- Reuse an existing worktree or branch only when the user explicitly asks to reuse it.
+- Clone only when the repo is missing locally, then fetch before starting work so the local checkout knows about current remote state.
+- Never commit directly on protected branches such as `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release`. If the user explicitly asks you to commit on one of those branches, confirm once more before doing it.
 - Never write outside `/workbench/` unless updating assistant-owned state under `/opt/data/`.
 
 ## Coding workflow
@@ -28,28 +37,29 @@ The host's source-code folders are not mounted. Keep coding projects under `/wor
 When the user asks you to change code, follow this workflow:
 
 1. Identify the repo. If the owner is unclear, use `gh search repos <name> --owner @me` or `gh repo list --limit 50`. Ask if it is still ambiguous.
-2. Reuse or create the local checkout:
+2. Reuse or create the canonical local checkout:
 
    ```bash
    mkdir -p /workbench/<owner>
    if [ ! -d /workbench/<owner>/<repo>/.git ]; then
      gh repo clone <owner>/<repo> /workbench/<owner>/<repo>
    fi
-   cd /workbench/<owner>/<repo>
-   git fetch --all --prune
+   git -C /workbench/<owner>/<repo> fetch --all --prune
    ```
 
-3. Check the worktree and create a task branch:
+3. Create a fresh worktree and task branch:
 
    ```bash
-   git status --short
    DEFAULT_BRANCH="$(gh repo view <owner>/<repo> --json defaultBranchRef -q .defaultBranchRef.name)"
-   git switch "$DEFAULT_BRANCH"
-   git pull --ff-only
-   git switch -c <BRANCH_PREFIX>/<short-task-slug>
+   TASK_SLUG=<short-task-slug>
+   BRANCH=<BRANCH_PREFIX>/$TASK_SLUG
+   TASK_DIR=/workbench/<owner>/<repo>-worktrees/$TASK_SLUG
+   git -C /workbench/<owner>/<repo> worktree add -b "$BRANCH" "$TASK_DIR" "origin/$DEFAULT_BRANCH"
+   cd "$TASK_DIR"
+   git status --short
    ```
 
-   If the worktree already has changes, inspect them before switching branches or pulling. Preserve unrelated user or previous-agent changes. If those changes belong to the current task, continue on the appropriate existing branch instead of creating a duplicate. Use `kebab-case` for new branch slugs, max 6 words.
+   Use `kebab-case` for new branch slugs, max 6 words. If the branch or task directory already exists, create a new unique slug with a short numeric suffix unless the user explicitly asked to reuse that branch or worktree. If the canonical clone is dirty, do not clean, reset, switch, or pull it; fetch is enough because the task worktree is created from `origin/$DEFAULT_BRANCH`.
 
 4. Decide whether to handle the task directly or delegate it.
 
@@ -73,7 +83,19 @@ When the user asks you to change code, follow this workflow:
 
    If the user named a sub-agent, use that one. If not, ask one focused question: `Use Codex, OpenCode, or Cursor for this?`
 
-5. Coding sub-agent defaults:
+5. Delegation prompt contract:
+
+   When a task is explicitly routed to Codex, OpenCode, or Cursor, do not reinterpret it into an implementation plan. Build the sub-agent prompt from the user's own request with only these changes:
+   - correct obvious typos and grammar when that improves readability;
+   - preserve the user's intent, constraints, tone, file names, and examples;
+   - add only minimal routing context such as `Work only in <task-worktree-path>` and `Do not commit, push, or open a PR unless explicitly asked`;
+   - do not add architecture guesses, solution sketches, implementation details, acceptance criteria, test plans, or extra requirements the user did not provide.
+
+   If the user supplied their own implementation details, pass those through. If the user attached images or other files, pass them as attachments or exact file paths using the target CLI's native mechanism. Do not describe, summarize, or infer from images before delegation; let the coding sub-agent inspect the attached image directly.
+
+   If Cursor is explicitly requested with images, provide the image paths in the prompt because Cursor's documented headless flags do not currently include a dedicated image-attachment flag. For image-heavy tasks where no agent is specified, prefer Codex or OpenCode because they expose attachment flags.
+
+6. Coding sub-agent defaults:
 
    Before invoking any tool, check its current help output if you are unsure about flags:
 
@@ -84,46 +106,51 @@ When the user asks you to change code, follow this workflow:
    ```
 
    Use these model defaults unless the user explicitly overrides them:
-   - Codex CLI: `gpt-5.5` with reasoning effort `high`.
-   - OpenCode CLI: `opencode-go/deepseek-v4-pro` with variant `high`.
+   - Codex CLI: `gpt-5.5` with reasoning effort `xhigh`.
+   - OpenCode CLI: `opencode-go/deepseek-v4-pro` with variant `max`.
    - Cursor CLI: `composer-2.5`. Cursor CLI does not currently expose a separate reasoning-effort flag; do not invent one.
 
    Headless permission flags are required because there is no human at a terminal to approve prompts:
    - Codex: pass `--dangerously-bypass-approvals-and-sandbox`.
    - OpenCode: pass `--dangerously-skip-permissions`.
-   - Cursor: pass `--force`, `--trust`, and `--sandbox disabled`.
+   - Cursor: pass `--force`.
 
    Preferred invocation shapes:
 
    ```bash
    codex exec \
+     --cd /workbench/<owner>/<repo>-worktrees/<short-task-slug> \
      --model gpt-5.5 \
-     --config 'model_reasoning_effort="high"' \
+     --config 'model_reasoning_effort="xhigh"' \
      --dangerously-bypass-approvals-and-sandbox \
      "<task prompt>"
 
    opencode run \
      --model opencode-go/deepseek-v4-pro \
-     --variant high \
-     --dir /workbench/<owner>/<repo> \
+     --variant max \
+     --dir /workbench/<owner>/<repo>-worktrees/<short-task-slug> \
      --dangerously-skip-permissions \
      "<task prompt>"
 
+   cd /workbench/<owner>/<repo>-worktrees/<short-task-slug>
    agent -p \
-     --workspace /workbench \
      --model composer-2.5 \
      --force \
      --trust \
      --sandbox disabled \
      --output-format text \
-     "Work only in /workbench/<owner>/<repo>. <task prompt>"
+     "Work only in /workbench/<owner>/<repo>-worktrees/<short-task-slug>. Do not commit, push, or open a PR unless explicitly asked. <task prompt>"
    ```
 
-   Codex reasoning effort is configured in `~/.codex/config.toml` and can also be overridden with `--config 'model_reasoning_effort="high"'`; do not invent a dedicated reasoning flag if the installed version does not expose one.
-   Cursor reads `/workbench/AGENTS.md` automatically because the entrypoint symlinks the shared coding-agent rules there and Cursor is invoked with `/workbench` as the workspace. Cursor also applies nested `AGENTS.md` files inside repo subdirectories when present, with more specific instructions taking precedence.
+   For Codex image tasks, repeat `--image /path/to/image.png` or pass comma-separated image paths. Codex global flags belong after the `exec` subcommand. For machine parsing, add `--json` and/or `--output-last-message`.
+   For OpenCode image or context-file tasks, repeat `--file /path/to/file` and keep `--dir` pointed at the task worktree. Use `--format json` when the caller needs raw event output.
+   For Cursor, official headless docs center on running `-p` / `--print` from the target project directory, with `--force` for direct edits, `--model`, `--output-format`, `--trust`, `--sandbox`, and optional `--workspace`. Always `cd` to the task worktree before invoking Cursor so project context and automatic project rules are scoped to the target worktree, not all of `/workbench`. This image symlinks `cursor-agent` as `agent`; if using `--workspace`, pass the task worktree path, never `/workbench`.
+   Codex reasoning effort is configured in `~/.codex/config.toml` and can also be overridden with `--config 'model_reasoning_effort="xhigh"'`; do not invent a dedicated reasoning flag if the installed version does not expose one.
+   OpenCode's durable config stores the default model; the default reasoning budget is applied at invocation time with `--variant max`.
+   Cursor reads project rules from the chosen workspace, including `.cursor/rules`, project-root `AGENTS.md`, and project-root `CLAUDE.md`; subdirectories can also have scoped `.cursor/rules`. Do not pass `/opt/data/coding-agents/AGENTS.md` in the Cursor prompt and do not copy or symlink shared Hermes rules into user repos. Hermes is responsible for routing policy; Cursor should receive the user's task plus only minimal guardrails such as the repo path and no commit/push/PR unless asked.
    Cursor's dedicated ACP server mode is available as `agent acp` for custom Agent Client Protocol clients. Do not use ACP for normal Hermes delegation; the terminal/process tools should run local headless `agent -p` commands.
 
-6. Long-running coding tasks:
+7. Long-running coding tasks:
 
    Coding-agent runs often take longer than normal shell commands. For anything likely to run more than a few minutes, start it as a background terminal process instead of a short foreground command:
 
@@ -138,16 +165,15 @@ When the user asks you to change code, follow this workflow:
 
    The default Hermes config gives terminal commands and gateway inactivity a two-hour budget. For tasks that may exceed that, tell the user before starting and continue with background polling instead of launching duplicate coding-agent runs.
 
-7. Review the sub-agent result instead of forwarding it blindly. Check `git diff`, run focused tests when available, and verify the change is scoped to the request.
+8. Review the sub-agent result instead of forwarding it blindly. Check `git diff`, run focused tests when available, and verify the change is scoped to the request.
 
-8. Show the diff and stop:
+9. Show the diff and stop:
 
    ```bash
-   DEFAULT_BRANCH="$(gh repo view <owner>/<repo> --json defaultBranchRef -q .defaultBranchRef.name)"
-   git -C /workbench/<owner>/<repo> diff "$DEFAULT_BRANCH"
+   git -C /workbench/<owner>/<repo>-worktrees/<short-task-slug> diff origin/<base-branch>
    ```
 
-9. Commit, push, or open a PR only when the user explicitly asks.
+10. Commit, push, or open a PR only when the user explicitly asks. Before committing, verify the current branch is not a protected branch. If it is protected, stop and ask for explicit confirmation even if the user already asked for a commit.
 
 ## Coding best practices
 
@@ -170,24 +196,26 @@ When the user asks you to change code, follow this workflow:
 | "Read/list gists"                         | Use `gh gist list`, `gh gist view`, or `gh api /gists`; no repo checkout needed.             |
 | "Create a gist"                           | Use `gh gist create`; secret is the default, use `--public` only when explicitly requested.  |
 | "Review PR #N on owner/repo"              | Use `gh pr view`, `gh pr diff`, and `gh pr review`; no clone needed.                         |
-| "Modify / fix / add / refactor"           | Reuse or clone the project under `/workbench/<owner>/<repo>`, then branch.                   |
-| "Run tests in repo X"                     | Reuse or clone the project under `/workbench/<owner>/<repo>` and run tests there.            |
+| "Modify / fix / add / refactor"           | Reuse or clone the canonical project, then create a fresh task worktree and branch.          |
+| "Run tests in repo X"                     | Reuse or clone the canonical project, then run tests in a fresh task worktree.               |
 
 ## Tools installed
 
-| Category      | Tools                                                  |
-| ------------- | ------------------------------------------------------ |
-| Coding agents | `codex`, `opencode`, `agent`/`cursor-agent`            |
-| GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists     |
-| Google        | `gws` plus Hermes' `google-workspace` skill            |
-| Git           | `git` with `gh` as credential helper                   |
-| JS/TS         | current LTS `node`, `npm`, `npx`, `bun`                 |
-| Python        | `python`, `python3`, `pip`, `uv`, `uvx`                |
-| Search/files  | `rg`, `fd`, `tree`, `find`, `less`, `vim-tiny`, `nano` |
-| Data          | `jq`                                                   |
-| Network       | `curl`, `wget`, `openssh-client`                       |
-| Patching      | `diff`, `patch`                                        |
-| Archives      | `unzip`, `zip`, `tar`                                  |
+| Category      | Tools                                                    |
+| ------------- | -------------------------------------------------------- |
+| Coding agents | `codex`, `opencode`, `agent`/`cursor-agent`              |
+| GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists       |
+| Google        | `gws` plus Hermes' `google-workspace` skill              |
+| Docker        | inner `dockerd`, `docker`, `docker compose`, `buildx`    |
+| Git           | `git` with `gh` as credential helper                     |
+| JS/TS         | current LTS `node`, `npm`, `npx`, `bun`                  |
+| Python        | `python`, `python3`, `pip`, `uv`, `uvx`                  |
+| Compilers     | `build-essential`, `clang`, `cmake`, `go`, `rust/cargo`  |
+| Search/files  | `rg`, `fd`, `tree`, `find`, `less`, `vim`, `nano`        |
+| Data          | `jq`, `yq`, `sqlite3`                                    |
+| Network       | `curl`, `wget`, `openssh-client`, `iproute2`, `dnsutils` |
+| Patching      | `diff`, `patch`                                          |
+| Archives      | `unzip`, `zip`, `tar`                                    |
 
 Prefer existing tools over ad hoc scripts. Use `rg` for text search and `jq` for JSON.
 
@@ -209,21 +237,25 @@ GitHub is intentionally handled through the `gh` CLI rather than an MCP server.
 
 ## Public attribution footer
 
-When you directly compose public GitHub text, such as issue comments or PR review bodies, append this footer after customizing the placeholders:
+For every public-facing artifact you write or post on behalf of the user, append this exact rendered footer unless the user explicitly asks you not to:
 
 ```text
 ---
 Authored by <ASSISTANT_NAME> (powered by Hermes Agent).
 ```
 
-Do not add the footer to code comments or commit messages. Skip it only if the user explicitly asks.
+This applies to commit messages, PR descriptions, PR review bodies, issue comments, public gist descriptions/content, release notes, emails, docs, and any other externally visible text. Treat commits, PRs, and GitHub comments as public-facing even when the repository is private.
+
+For commit messages, put the footer in the commit body, not the subject. Do not reword, shorten, translate, or replace the footer with a different attribution format such as `Co-authored-by`. Do not put the footer in branch names, PR titles, issue titles, source files, generated code, or code comments; put it in the surrounding public message/body instead.
 
 For gists, never publish secrets, credentials, private repository contents, private logs, or user data. Default to secret gists because `gh gist create` does that automatically; pass `--public` only when the user explicitly asks for a public gist.
 
 ## Rules
 
 - Stay inside `/workbench/` for repo work.
+- Use a fresh git worktree and task branch for each coding task unless the user explicitly asks to reuse an existing worktree.
 - Do not push, open PRs, or commit unless the user explicitly asks.
+- Never commit directly on protected branches such as `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
 - Never paste secrets into chat, including `GH_TOKEN`, `TELEGRAM_BOT_TOKEN`, or anything from `.env`.
 - Keep changes scoped to the requested task.
 - Surface sub-agent errors clearly.

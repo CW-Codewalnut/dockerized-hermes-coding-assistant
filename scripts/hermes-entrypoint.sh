@@ -5,9 +5,9 @@
 #
 # 1. Symlink the global coding-agent AGENTS.md into the per-tool config dirs
 #    for tools that support a global rules file (codex at $HOME/.codex,
-#    opencode at $HOME/.config/opencode). Cursor CLI reads AGENTS.md from the
-#    workspace root and nested subdirectories, so this same file is symlinked
-#    to /workbench/AGENTS.md and Cursor runs with /workbench as its workspace.
+#    opencode at $HOME/.config/opencode). Cursor is invoked from the target
+#    repo directory and relies on repo-local Cursor rules instead of a shared
+#    /workbench-level rule file.
 #
 # 2. Chown the persistent state and workbench volumes to hermes. Docker named
 #    volumes can first appear as root:root, which prevents the hermes runtime
@@ -50,7 +50,6 @@ needs_render() {
   local dst="$1"
   [[ ! -f "$dst" ]] && return 0
   grep -q '<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>' "$dst" && return 0
-  grep -q 'Replace these placeholders before running the assistant:' "$dst" && return 0
   return 1
 }
 
@@ -89,6 +88,9 @@ terminal:
   env_passthrough:
     - GH_TOKEN
     - CURSOR_API_KEY
+    - DOCKER_HOST
+    - DOCKER_BUILDKIT
+    - COMPOSE_DOCKER_CLI_BUILD
 
 dashboard:
   enabled: true
@@ -111,17 +113,6 @@ session_reset:
   idle_minutes: 1440
   at_hour: 4
 EOF
-fi
-
-if [[ -f /opt/data/config.yaml ]] \
-  && ! grep -q '^[[:space:]]*-[[:space:]]*CURSOR_API_KEY[[:space:]]*$' /opt/data/config.yaml; then
-  if grep -q '^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$' /opt/data/config.yaml; then
-    sed -i '/^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$/a\    - CURSOR_API_KEY' /opt/data/config.yaml
-  elif grep -q '^[[:space:]]*env_passthrough:[[:space:]]*$' /opt/data/config.yaml; then
-    sed -i '/^[[:space:]]*env_passthrough:[[:space:]]*$/a\    - CURSOR_API_KEY' /opt/data/config.yaml
-  else
-    echo "hermes-entrypoint: WARNING could not add CURSOR_API_KEY to terminal.env_passthrough in /opt/data/config.yaml" >&2
-  fi
 fi
 
 chown -R 10000:10000 /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents /opt/data/config.yaml 2>/dev/null || true
@@ -149,8 +140,6 @@ mkdir -p \
 if [[ -f "$RULES_SRC" ]]; then
   ln -sf "$RULES_SRC" /opt/data/.codex/AGENTS.md
   ln -sf "$RULES_SRC" /opt/data/.config/opencode/AGENTS.md
-  ln -sf "$RULES_SRC" /workbench/AGENTS.md
-  chown -h 10000:10000 /workbench/AGENTS.md 2>/dev/null || true
 else
   echo "hermes-entrypoint: WARNING $RULES_SRC missing; coding agents will run without global rules" >&2
 fi
@@ -182,12 +171,11 @@ approval_policy = "never"
 sandbox_mode    = "danger-full-access"
 model           = "gpt-5.5"
 
-# Reasoning effort — codex CLI does NOT expose this as a flag, config.toml is
-# the only knob. Values: minimal | low | medium | high | xhigh. We default to
-# "high" to match the default Hermes brain config (reasoning_effort: high). Edit this
-# file directly to change it; the entrypoint only writes this file once and
-# leaves an existing one alone.
-model_reasoning_effort = "high"
+# Reasoning effort — codex CLI does NOT expose this as a dedicated flag,
+# so config.toml is the durable default. Values: minimal | low | medium |
+# high | xhigh. Edit this file directly to change it; the entrypoint only
+# writes this file once and leaves an existing one alone.
+model_reasoning_effort = "xhigh"
 EOF
 fi
 
@@ -198,10 +186,22 @@ if [[ ! -f "$OPENCODE_JSON" ]]; then
   "$schema": "https://opencode.ai/config.json",
   "model": "opencode-go/deepseek-v4-pro",
   "permission": {
+    "read": "allow",
     "edit": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
     "bash": "allow",
     "write": "allow",
-    "webfetch": "allow"
+    "task": "allow",
+    "external_directory": "allow",
+    "todowrite": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "lsp": "allow",
+    "skill": "allow",
+    "question": "allow",
+    "doom_loop": "allow"
   }
 }
 EOF
