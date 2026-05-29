@@ -248,10 +248,29 @@ print_inner_docker_debug() {
   echo "Inner Docker process/socket state:"
   compose_exec 5 "$SERVICE" sh -lc '
     set +e
+    echo "dockerd service:"
+    s6-svstat /run/service/dockerd 2>/dev/null || true
+    ls -la /etc/services.d/dockerd /run/service/dockerd 2>/dev/null || true
+    echo
+    echo "dockerd process:"
     ps -ef | grep "[d]ockerd"
+    echo
+    echo "dockerd socket/state:"
     ls -l /var/run/docker.sock /var/lib/docker 2>/dev/null
+    echo
+    echo "dockerd log:"
     tail -80 /var/log/docker.log 2>/dev/null
   ' 2>&1 | sed 's/^/    /' || true
+}
+
+retry_inner_docker_driver() {
+  local driver="$1"
+  echo
+  echo "Inner Docker did not become ready; retrying ${driver} ..."
+  write_store_value config dockerd_storage_driver "$driver"
+  compose up -d --force-recreate
+  wait_for_container
+  wait_for_inner_docker_once
 }
 
 wait_for_inner_docker() {
@@ -261,16 +280,15 @@ wait_for_inner_docker() {
   fi
 
   driver="$(read_store_value config dockerd_storage_driver 2>/dev/null || true)"
-  if [[ "${driver:-overlay2}" == "overlay2" ]]; then
-    echo
-    echo "Inner Docker did not become ready with overlay2; retrying fuse-overlayfs ..."
-    write_store_value config dockerd_storage_driver "fuse-overlayfs"
-    compose up -d --force-recreate
-    wait_for_container
-    if wait_for_inner_docker_once; then
-      return 0
-    fi
-  fi
+  case "${driver:-overlay2}" in
+    overlay2)
+      retry_inner_docker_driver "fuse-overlayfs" && return 0
+      retry_inner_docker_driver "vfs" && return 0
+      ;;
+    fuse-overlayfs)
+      retry_inner_docker_driver "vfs" && return 0
+      ;;
+  esac
 
   print_inner_docker_debug
   return 1

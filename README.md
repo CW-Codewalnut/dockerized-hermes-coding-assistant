@@ -151,7 +151,11 @@ Runtime state is stored in named Docker volumes:
 | `${assistant-slug}_workbench` | Canonical repo checkouts and task worktrees under `/workbench`. |
 | `${assistant-slug}_docker`    | Inner Docker images, containers, volumes, and build cache.      |
 
-The inner Docker daemon uses `overlay2`. If that fails in an unusual nested setup, set `.assistant/config/dockerd_storage_driver` to `fuse-overlayfs`, then recreate the container with `scripts/compose.sh up -d --force-recreate`.
+The inner Docker daemon starts with `overlay2`. During setup, if that does not
+become ready, setup retries with `fuse-overlayfs` and then `vfs`. `vfs` is slower
+but works on more constrained nested VPS environments. To force a driver, edit
+`.assistant/config/dockerd_storage_driver`, then recreate the container with
+`scripts/compose.sh up -d --force-recreate`.
 
 ## Google Workspace
 

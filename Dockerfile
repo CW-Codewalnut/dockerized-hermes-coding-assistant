@@ -134,11 +134,15 @@ RUN install -d -m 0755 /etc/services.d/dockerd \
        && printf '%s\n' \
        '#!/usr/bin/env bash' \
        'set -euo pipefail' \
-       'mkdir -p /var/run /var/lib/docker' \
+       'mkdir -p /var/run /var/lib/docker /var/log' \
+       'touch /var/log/docker.log' \
+       'chmod 0644 /var/log/docker.log' \
+       'exec > >(tee -a /var/log/docker.log) 2>&1' \
        'driver=""' \
        'profile_driver="/run/hermes-assistant/config/dockerd_storage_driver"' \
        'if [ -z "$driver" ] && [ -r "$profile_driver" ]; then IFS= read -r driver < "$profile_driver" || driver=""; fi' \
        'driver="${driver:-${DOCKERD_STORAGE_DRIVER:-overlay2}}"' \
+       'echo "Starting dockerd with storage driver: $driver"' \
        'exec dockerd --host=unix:///var/run/docker.sock --group='"$HERMES_GROUP"' --data-root=/var/lib/docker --storage-driver="$driver"' \
        > /etc/services.d/dockerd/run \
        && chmod +x /etc/services.d/dockerd/run
