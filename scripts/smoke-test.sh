@@ -139,8 +139,49 @@ section "Cursor CLI"
 run_optional "Cursor version, auth status, and model list" hermes_exec sh -lc '
   set -eu
   agent --version
-  agent status
-  agent models >/dev/null
+  status_log="$(mktemp)"
+  models_log="$(mktemp)"
+  cleanup() {
+    rm -f "$status_log" "$models_log"
+  }
+  trap cleanup EXIT
+
+  cursor_ready_quiet() {
+    agent status >"$status_log" 2>&1 && agent models >"$models_log" 2>&1
+  }
+
+  cursor_auth_hint() {
+    [ -n "${CURSOR_API_KEY:-}" ] && return 0
+    if [ -s "$HOME/.cursor/cli-config.json" ] &&
+      grep -Eiq "\"(auth|token|api[_-]?key|access[_-]?token|refresh[_-]?token|user|email|account)\"" "$HOME/.cursor/cli-config.json"; then
+      return 0
+    fi
+    find "$HOME/.cursor" "$HOME/.local/share/cursor-agent" \
+      -type f ! -name cli-config.json ! -name "*.lock" -size +0c \
+      -print -quit 2>/dev/null | grep -q .
+  }
+
+  attempts=1
+  delay_seconds="${CURSOR_SMOKE_DELAY_SECONDS:-5}"
+  if cursor_auth_hint; then
+    attempts="${CURSOR_SMOKE_ATTEMPTS:-6}"
+  fi
+
+  attempt=1
+  while [ "$attempt" -le "$attempts" ]; do
+    if cursor_ready_quiet; then
+      cat "$status_log"
+      exit 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "  Cursor auth not ready yet; retrying in ${delay_seconds}s ..."
+      sleep "$delay_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+  cat "$status_log" >&2
+  cat "$models_log" >&2
+  exit 1
 '
 
 section "Google Workspace"
