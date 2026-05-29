@@ -7,10 +7,25 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/setup-store.sh"
 assistant_store_init "$ROOT"
 
+subcommand=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *) subcommand="$arg"; break ;;
+  esac
+done
+
 if [[ ! -d "$ASSISTANT_CONFIG_DIR" ]]; then
   echo "No setup profile found. Run scripts/setup.sh first." >&2
   exit 1
 fi
+
+profile_required=true
+case "$subcommand" in
+  config|cp|down|exec|images|logs|ls|ps|pull|rm|stop|top|version)
+    profile_required=false
+    ;;
+esac
 
 missing=()
 require_config() {
@@ -45,7 +60,7 @@ if [[ "$api_enabled" == "true" ]]; then
   require_secret api_server_key
 fi
 
-if [[ "${#missing[@]}" -gt 0 ]]; then
+if [[ "$profile_required" == "true" && "${#missing[@]}" -gt 0 ]]; then
   echo "Setup profile is incomplete. Run scripts/setup.sh first." >&2
   printf 'Missing: %s\n' "${missing[@]}" >&2
   exit 1

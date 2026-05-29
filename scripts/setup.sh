@@ -98,23 +98,74 @@ wait_for_container() {
   echo
   echo "Waiting for container ..."
   for _ in {1..90}; do
-    if compose exec -T "$SERVICE" true >/dev/null 2>&1; then
+    if compose_exec 10 "$SERVICE" true >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
   done
-  compose exec -T "$SERVICE" true >/dev/null
+  compose_exec 10 "$SERVICE" true >/dev/null
+}
+
+compose_exec() {
+  local timeout_seconds="$1"
+  shift
+  load_compose_env
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${timeout_seconds}s" docker compose exec -T "$@"
+  else
+    docker compose exec -T "$@"
+  fi
+}
+
+inner_docker_ready() {
+  compose_exec 10 -u hermes "$SERVICE" docker info >/dev/null 2>&1
+}
+
+wait_for_inner_docker_once() {
+  echo "Waiting for inner Docker daemon ..."
+  for _ in {1..90}; do
+    if inner_docker_ready; then
+      return 0
+    fi
+    sleep 2
+  done
+  inner_docker_ready
+}
+
+print_inner_docker_debug() {
+  echo
+  echo "Inner Docker did not become ready. Recent container logs:"
+  compose logs --tail=160 "$SERVICE" 2>&1 | sed 's/^/    /' || true
+  echo
+  echo "Inner Docker process/socket state:"
+  compose_exec 10 "$SERVICE" sh -lc '
+    set +e
+    ps -ef | grep "[d]ockerd"
+    ls -l /var/run/docker.sock /var/lib/docker 2>/dev/null
+    tail -80 /var/log/docker.log 2>/dev/null
+  ' 2>&1 | sed 's/^/    /' || true
 }
 
 wait_for_inner_docker() {
-  echo "Waiting for inner Docker daemon ..."
-  for _ in {1..90}; do
-    if compose exec -T -u hermes "$SERVICE" docker info >/dev/null 2>&1; then
+  local driver
+  if wait_for_inner_docker_once; then
+    return 0
+  fi
+
+  driver="$(read_store_value config dockerd_storage_driver 2>/dev/null || true)"
+  if [[ "${driver:-overlay2}" == "overlay2" ]]; then
+    echo
+    echo "Inner Docker did not become ready with overlay2; retrying fuse-overlayfs ..."
+    write_store_value config dockerd_storage_driver "fuse-overlayfs"
+    compose up -d --force-recreate
+    wait_for_container
+    if wait_for_inner_docker_once; then
       return 0
     fi
-    sleep 2
-  done
-  compose exec -T -u hermes "$SERVICE" docker info >/dev/null
+  fi
+
+  print_inner_docker_debug
+  return 1
 }
 
 normalize_bool_config() {
