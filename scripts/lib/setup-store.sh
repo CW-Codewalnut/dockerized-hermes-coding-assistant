@@ -4,6 +4,8 @@
 ASSISTANT_STORE_ROOT=""
 ASSISTANT_CONFIG_DIR=""
 ASSISTANT_SECRETS_DIR=""
+ASSISTANT_RUNTIME_UID="${ASSISTANT_RUNTIME_UID:-10000}"
+ASSISTANT_WARNED_NO_SETFACL="${ASSISTANT_WARNED_NO_SETFACL:-false}"
 
 assistant_store_init() {
   ASSISTANT_STORE_ROOT="$1"
@@ -14,6 +16,32 @@ assistant_store_init() {
 ensure_store_dirs() {
   mkdir -p "$ASSISTANT_CONFIG_DIR" "$ASSISTANT_SECRETS_DIR"
   chmod 700 "$ASSISTANT_STORE_ROOT/.assistant" "$ASSISTANT_CONFIG_DIR" "$ASSISTANT_SECRETS_DIR"
+  grant_runtime_store_access
+}
+
+grant_runtime_store_access() {
+  local dirs=("$ASSISTANT_STORE_ROOT/.assistant" "$ASSISTANT_CONFIG_DIR" "$ASSISTANT_SECRETS_DIR")
+  local file
+
+  [[ -d "$ASSISTANT_STORE_ROOT/.assistant" ]] || return 0
+
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:${ASSISTANT_RUNTIME_UID}:rx" "${dirs[@]}" 2>/dev/null || true
+    for file in "$ASSISTANT_CONFIG_DIR"/* "$ASSISTANT_SECRETS_DIR"/*; do
+      [[ -f "$file" ]] || continue
+      setfacl -m "u:${ASSISTANT_RUNTIME_UID}:r" "$file" 2>/dev/null || true
+    done
+  else
+    if [[ "$ASSISTANT_WARNED_NO_SETFACL" != "true" ]]; then
+      echo "Warning: setfacl not found; using owner-private dirs with runtime-readable profile files." >&2
+      ASSISTANT_WARNED_NO_SETFACL=true
+    fi
+    chmod o+x "${dirs[@]}" 2>/dev/null || true
+    for file in "$ASSISTANT_CONFIG_DIR"/* "$ASSISTANT_SECRETS_DIR"/*; do
+      [[ -f "$file" ]] || continue
+      chmod o+r "$file" 2>/dev/null || true
+    done
+  fi
 }
 
 store_path() {
@@ -48,6 +76,7 @@ write_store_value() {
   umask 077
   printf '%s\n' "$value" > "$path"
   chmod "$mode" "$path"
+  grant_runtime_store_access
 }
 
 has_store_value() {
@@ -141,6 +170,7 @@ load_compose_env() {
 }
 
 compose() {
+  grant_runtime_store_access
   load_compose_env
   docker compose "$@"
 }
