@@ -94,26 +94,107 @@ You will need:
 EOF
 }
 
+assistant_container_name() {
+  local name
+  name="$(read_store_value config assistant_slug 2>/dev/null || true)"
+  printf '%s\n' "${name:-hermes-assistant}"
+}
+
+container_id() {
+  local name
+  name="$(assistant_container_name)"
+  docker ps -aq --filter "name=^/${name}$" | head -n1
+}
+
+container_state() {
+  local id="$1"
+  docker inspect -f '{{.State.Running}} {{.State.Restarting}} {{.State.Status}} {{.State.ExitCode}} {{.State.Error}}' "$id" 2>/dev/null || true
+}
+
+container_running() {
+  local id state running restarting
+  id="$(container_id)"
+  [[ -n "$id" ]] || return 1
+  state="$(container_state "$id")"
+  read -r running restarting _ <<< "$state"
+  [[ "$running" == "true" && "$restarting" != "true" ]]
+}
+
+print_container_debug() {
+  local name
+  name="$(assistant_container_name)"
+  echo
+  echo "Container did not become stable. Container status:"
+  docker ps -a --filter "name=^/${name}$" 2>&1 | sed 's/^/    /' || true
+  echo
+  echo "Recent container logs:"
+  docker logs --tail=180 "$name" 2>&1 | sed 's/^/    /' || true
+}
+
 wait_for_container() {
+  local attempt id state
   echo
   echo "Waiting for container ..."
-  for _ in {1..90}; do
-    if compose_exec 10 "$SERVICE" true >/dev/null 2>&1; then
+  for attempt in {1..60}; do
+    if container_running; then
       return 0
+    fi
+    if ((attempt == 1 || attempt % 10 == 0)); then
+      id="$(container_id)"
+      if [[ -n "$id" ]]; then
+        state="$(container_state "$id")"
+        echo "  container state: ${state:-unknown}"
+      else
+        echo "  container state: not created yet"
+      fi
     fi
     sleep 2
   done
-  compose_exec 10 "$SERVICE" true >/dev/null
+  print_container_debug
+  return 1
 }
 
 compose_exec() {
   local timeout_seconds="$1"
+  local docker_args=()
+  local service container
   shift
-  load_compose_env
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${timeout_seconds}s" docker compose exec -T "$@"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -T)
+        shift
+        ;;
+      -u|--user|-e|--env|-w|--workdir)
+        docker_args+=("$1" "$2")
+        shift 2
+        ;;
+      --user=*|--env=*|--workdir=*)
+        docker_args+=("$1")
+        shift
+        ;;
+      -*)
+        docker_args+=("$1")
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  service="$1"
+  shift
+  if [[ "$service" == "$SERVICE" ]]; then
+    container="$(assistant_container_name)"
   else
-    docker compose exec -T "$@"
+    container="$service"
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${timeout_seconds}s" docker exec "${docker_args[@]}" "$container" "$@"
+  else
+    docker exec "${docker_args[@]}" "$container" "$@"
   fi
 }
 
