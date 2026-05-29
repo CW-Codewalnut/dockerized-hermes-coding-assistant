@@ -13,6 +13,9 @@ assistant_store_init "$ROOT"
 _SETUP_STTY_STATE=""
 SETUP_TEMP_FILES=()
 SETUP_CONTAINER_TEMP_SECRET=""
+OPTIONAL_STEP_ACTIVE=false
+OPTIONAL_STEP_INTERRUPTED=false
+OPTIONAL_STEP_NAME=""
 
 cleanup_setup_temps() {
   if [[ "${#SETUP_TEMP_FILES[@]}" -gt 0 ]]; then
@@ -23,14 +26,20 @@ cleanup_setup_temps() {
   fi
 }
 
-setup_abort() {
+setup_interrupt() {
   setup_enable_echo
+  if [[ "$OPTIONAL_STEP_ACTIVE" == "true" ]]; then
+    OPTIONAL_STEP_INTERRUPTED=true
+    echo
+    echo "Skipping ${OPTIONAL_STEP_NAME:-optional setup step}."
+    return 130
+  fi
   cleanup_setup_temps
   echo
   exit 130
 }
 
-trap setup_abort INT TERM
+trap setup_interrupt INT TERM
 trap cleanup_setup_temps EXIT
 
 setup_disable_echo() {
@@ -45,6 +54,104 @@ setup_enable_echo() {
     stty "$_SETUP_STTY_STATE"
     _SETUP_STTY_STATE=""
   fi
+}
+
+run_with_optional_interrupt() {
+  local label="$1"
+  local status
+  shift
+
+  OPTIONAL_STEP_ACTIVE=true
+  OPTIONAL_STEP_INTERRUPTED=false
+  OPTIONAL_STEP_NAME="$label"
+  set +e
+  "$@"
+  status=$?
+  set -e
+  OPTIONAL_STEP_ACTIVE=false
+  OPTIONAL_STEP_NAME=""
+
+  if [[ "$OPTIONAL_STEP_INTERRUPTED" == "true" || "$status" -eq 130 ]]; then
+    setup_enable_echo
+    OPTIONAL_STEP_INTERRUPTED=false
+    return 130
+  fi
+
+  return "$status"
+}
+
+retry_optional_auth() {
+  local label="$1"
+  local status retry_status
+  shift
+
+  while true; do
+    if run_with_optional_interrupt "$label" "$@"; then
+      status=0
+    else
+      status=$?
+    fi
+    case "$status" in
+      0)
+        return 0
+        ;;
+      130)
+        echo "$label skipped."
+        return 130
+        ;;
+    esac
+
+    echo "$label failed." >&2
+    if run_with_optional_interrupt "$label" confirm "Try $label again"; then
+      retry_status=0
+    else
+      retry_status=$?
+    fi
+    case "$retry_status" in
+      0) ;;
+      130)
+        echo "$label skipped."
+        return 130
+        ;;
+      *)
+        return "$status"
+        ;;
+    esac
+  done
+}
+
+run_optional_login_prompt() {
+  local prompt="$1"
+  local label="$2"
+  local status
+  shift 2
+
+  if run_with_optional_interrupt "$label" confirm "$prompt"; then
+    status=0
+  else
+    status=$?
+  fi
+  case "$status" in
+    0) ;;
+    130)
+      echo "$label skipped."
+      return 0
+      ;;
+    *)
+      echo "$label skipped."
+      return 0
+      ;;
+  esac
+
+  if retry_optional_auth "$label" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 0 && "$status" -ne 130 ]]; then
+    echo "$label failed; continuing setup." >&2
+  fi
+  return 0
 }
 
 json_file_is_valid() {
@@ -478,35 +585,56 @@ prompt_missing_git_identity() {
   fi
 }
 
+github_token_login_once() {
+  local token
+  read -r -s -p "GitHub classic PAT with repo/gist scopes (blank to skip): " token
+  echo
+  if [[ -z "$token" ]]; then
+    return 130
+  fi
+  printf '%s\n' "$token" | compose exec -T -u hermes "$SERVICE" gh auth login --hostname github.com --with-token
+}
+
 configure_github_and_git_identity() {
-  local token identity_changed_var="$1"
+  local identity_changed_var="$1"
+  local status
 
   echo
   echo "== GitHub and git identity =="
   if github_configured; then
     echo "GitHub CLI auth: already configured"
     derive_git_identity_from_github "$identity_changed_var" || true
-  elif confirm "Authenticate GitHub CLI now"; then
-    read -r -s -p "GitHub classic PAT with repo/gist scopes: " token
-    echo
-    if [[ -n "$token" ]]; then
-      if printf '%s\n' "$token" | compose exec -T -u hermes "$SERVICE" gh auth login --hostname github.com --with-token; then
+  else
+    if run_with_optional_interrupt "GitHub CLI auth" confirm "Authenticate GitHub CLI now"; then
+      status=0
+    else
+      status=$?
+    fi
+    if [[ "$status" -eq 0 ]]; then
+      if retry_optional_auth "GitHub CLI auth" github_token_login_once; then
+        status=0
+      else
+        status=$?
+      fi
+      if [[ "$status" -eq 0 ]]; then
         echo "GitHub CLI auth: configured"
         derive_git_identity_from_github "$identity_changed_var" || true
+      elif [[ "$status" -eq 130 ]]; then
+        echo "GitHub CLI auth skipped."
       else
         echo "GitHub CLI auth failed; continuing without GitHub auth." >&2
       fi
+    elif [[ "$status" -eq 130 ]]; then
+      echo "GitHub CLI auth skipped."
     else
       echo "GitHub CLI auth skipped."
     fi
-  else
-    echo "GitHub CLI auth skipped."
   fi
 
   prompt_missing_git_identity "$identity_changed_var"
 }
 
-setup_google_workspace() {
+setup_google_workspace_impl() {
   local gsetup container_secret client_secret_path auth_url oauth_callback
   local client_secret_source temp_secret_path
   gsetup='/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
@@ -642,16 +770,17 @@ EOF
     return 0
   fi
 
-  echo
-  echo "Open this URL in your browser and approve access:"
-  echo "$auth_url"
-  echo
-  echo "The browser will probably fail to load http://localhost:1 after approval."
-  echo "That is expected. Copy the full redirected URL from the browser address bar."
-  echo
-  read -r -p "Paste the full redirected URL or auth code (blank to finish later): " oauth_callback
-  if [[ -z "$oauth_callback" ]]; then
-    cat <<'EOF'
+  while true; do
+    echo
+    echo "Open this URL in your browser and approve access:"
+    echo "$auth_url"
+    echo
+    echo "The browser will probably fail to load http://localhost:1 after approval."
+    echo "That is expected. Copy the full redirected URL from the browser address bar."
+    echo
+    read -r -p "Paste the full redirected URL or auth code (blank to finish later): " oauth_callback
+    if [[ -z "$oauth_callback" ]]; then
+      cat <<'EOF'
 Google Workspace authorization is pending.
 
 To finish later, rerun `scripts/setup.sh` and answer yes at the Google Workspace
@@ -660,19 +789,44 @@ prompt, or run this inside the container:
   $GSETUP --auth-url
   $GSETUP --auth-code 'PASTE_FULL_REDIRECT_URL_HERE'
 EOF
-    return 0
-  fi
+      return 0
+    fi
 
-  if ! compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-code \"\$1\"" sh "$oauth_callback"; then
-    echo "Google Workspace authorization failed. Rerun setup when you have a fresh redirect URL or auth code." >&2
-    return 0
-  fi
+    if compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-code \"\$1\"" sh "$oauth_callback"; then
+      break
+    fi
+
+    echo "Google Workspace authorization failed." >&2
+    if ! confirm "Try Google Workspace authorization again"; then
+      echo "Google Workspace auth skipped."
+      return 0
+    fi
+    if ! auth_url="$(compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-url")"; then
+      echo "Could not generate a Google auth URL. Rerun setup after checking the OAuth client JSON." >&2
+      return 0
+    fi
+  done
 
   if compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check-live"; then
     echo "Google Workspace auth: configured"
   else
     echo "Google Workspace token was stored, but live verification failed. Check enabled APIs and OAuth scopes." >&2
   fi
+}
+
+setup_google_workspace() {
+  local status
+  if run_with_optional_interrupt "Google Workspace setup" setup_google_workspace_impl; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$status" -eq 130 ]]; then
+    echo "Google Workspace setup skipped."
+  elif [[ "$status" -ne 0 ]]; then
+    echo "Google Workspace setup failed; continuing setup." >&2
+  fi
+  return 0
 }
 
 configure_local_profile
@@ -701,21 +855,17 @@ fi
 
 echo
 echo "== Interactive logins =="
-if confirm "Run Hermes model setup now"; then
+run_optional_login_prompt "Run Hermes model setup now" "Hermes model setup" \
   compose exec -u hermes -it "$SERVICE" hermes setup model
-fi
 
-if confirm "Run Codex device login now"; then
+run_optional_login_prompt "Run Codex device login now" "Codex device login" \
   compose exec -u hermes -it "$SERVICE" codex login --device-auth
-fi
 
-if confirm "Run OpenCode auth login now"; then
+run_optional_login_prompt "Run OpenCode auth login now" "OpenCode auth login" \
   compose exec -u hermes -it "$SERVICE" opencode auth login
-fi
 
-if confirm "Run Cursor browser login now"; then
+run_optional_login_prompt "Run Cursor browser login now" "Cursor browser login" \
   compose exec -u hermes -it "$SERVICE" agent login
-fi
 
 setup_google_workspace
 

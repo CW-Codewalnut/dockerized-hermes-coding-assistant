@@ -83,6 +83,9 @@ Setup prompts for:
 
 The local setup profile lives under `.assistant/`, which is ignored by git and mounted read-only into the container. Do not commit that directory.
 
+Optional auth steps retry after failures. Press `Ctrl-C` during an optional auth
+step to skip that step and continue setup.
+
 ## Operations
 
 Use the wrapper so Compose receives the assistant slug and port values from the setup profile:
