@@ -5,37 +5,84 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ $# -ne 1 ]]; then
-  echo "Usage: scripts/restore-state.sh <backup.tar.gz>" >&2
+# shellcheck source=scripts/lib/setup-store.sh
+source "$ROOT/scripts/lib/setup-store.sh"
+assistant_store_init "$ROOT"
+
+SLUG_OVERRIDE=""
+BACKUP_INPUT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --slug)
+      SLUG_OVERRIDE="${2:-}"
+      if [[ -z "$SLUG_OVERRIDE" ]]; then
+        echo "--slug requires a value" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: scripts/restore-state.sh [--slug assistant-slug] <backup.tar.gz>" >&2
+      exit 0
+      ;;
+    *)
+      if [[ -n "$BACKUP_INPUT" ]]; then
+        echo "Unexpected argument: $1" >&2
+        exit 2
+      fi
+      BACKUP_INPUT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$BACKUP_INPUT" ]]; then
+  echo "Usage: scripts/restore-state.sh [--slug assistant-slug] <backup.tar.gz>" >&2
   exit 2
 fi
 
-BACKUP_INPUT="$1"
 BACKUP_DIR="$(cd "$(dirname "$BACKUP_INPUT")" && pwd)"
 BACKUP_FILE="$(basename "$BACKUP_INPUT")"
 BACKUP_PATH="$BACKUP_DIR/$BACKUP_FILE"
 
 test -f "$BACKUP_PATH"
 
-if [[ ! -f .env ]]; then
-  tar -xzf "$BACKUP_PATH" .env
-  chmod 600 .env
-fi
-
-get_env() {
-  local key="$1"
-  awk -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      val = substr($0, index($0, "=") + 1)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-      if (val ~ /^".*"$/ || val ~ /^'\''.*'\''$/) val = substr(val, 2, length(val) - 2)
-      print val
-      exit
-    }
-  ' .env
+restore_profile_from_backup() {
+  local temp_dir="$1"
+  if tar -xzf "$BACKUP_PATH" -C "$temp_dir" ./.assistant 2>/dev/null ||
+    tar -xzf "$BACKUP_PATH" -C "$temp_dir" .assistant 2>/dev/null; then
+    if [[ -d "$temp_dir/.assistant/config" ]]; then
+      rm -rf "$ASSISTANT_CONFIG_DIR"
+      mkdir -p "$ASSISTANT_STORE_ROOT/.assistant"
+      cp -a "$temp_dir/.assistant/config" "$ASSISTANT_CONFIG_DIR"
+    fi
+    if [[ -d "$temp_dir/.assistant/secrets" ]]; then
+      rm -rf "$ASSISTANT_SECRETS_DIR"
+      mkdir -p "$ASSISTANT_STORE_ROOT/.assistant"
+      cp -a "$temp_dir/.assistant/secrets" "$ASSISTANT_SECRETS_DIR"
+    fi
+    ensure_store_dirs
+    find "$ASSISTANT_CONFIG_DIR" -type f -exec chmod 644 {} + 2>/dev/null || true
+    find "$ASSISTANT_SECRETS_DIR" -type f -exec chmod 600 {} + 2>/dev/null || true
+  fi
 }
 
-SLUG="$(get_env ASSISTANT_SLUG)"
+PROFILE_TEMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$PROFILE_TEMP_DIR"' EXIT
+restore_profile_from_backup "$PROFILE_TEMP_DIR"
+
+if [[ -n "$SLUG_OVERRIDE" ]]; then
+  write_store_value config assistant_slug "$SLUG_OVERRIDE"
+fi
+
+SLUG="$SLUG_OVERRIDE"
+if [[ -z "$SLUG" ]]; then
+  SLUG="$(read_store_value config assistant_slug 2>/dev/null || true)"
+fi
+if [[ -z "$SLUG" ]]; then
+  SLUG="$(tar -xOzf "$BACKUP_PATH" ./metadata/assistant_slug 2>/dev/null || tar -xOzf "$BACKUP_PATH" metadata/assistant_slug 2>/dev/null || true)"
+fi
 SLUG="${SLUG:-hermes-assistant}"
 
 docker volume create "${SLUG}_data" >/dev/null
@@ -69,3 +116,6 @@ docker run --rm \
   '
 
 echo "Restored ${SLUG}_data, ${SLUG}_workbench, and ${SLUG}_docker from $BACKUP_PATH"
+if [[ ! -d "$ASSISTANT_CONFIG_DIR" || ! -f "$ASSISTANT_SECRETS_DIR/telegram_bot_token" ]]; then
+  echo "Run scripts/setup.sh to create or refresh the local setup profile before starting the assistant."
+fi

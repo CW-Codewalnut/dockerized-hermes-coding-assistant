@@ -2,7 +2,7 @@
 
 This file is project-scoped operational context: installed tools, filesystem layout, and workflow rules. Identity and voice live separately in `SOUL.md`.
 
-The primary operator is **<USER_NAME>**. Commits made inside this container should use `<GIT_USER_NAME> <<GIT_USER_EMAIL>>`, configured from `GIT_USER_NAME` and `GIT_USER_EMAIL` in `.env`.
+The primary operator is **<USER_NAME>**. Commits made inside this container should use `<GIT_USER_NAME> <<GIT_USER_EMAIL>>`, configured by the setup profile.
 
 ## Filesystem layout
 
@@ -196,7 +196,7 @@ When the user asks you to change code, follow this workflow:
 | Category      | Tools                                                    |
 | ------------- | -------------------------------------------------------- |
 | Coding agents | `codex`, `opencode`, `agent`/`cursor-agent`              |
-| GitHub        | `gh` with auth from `GH_TOKEN` for repos and gists       |
+| GitHub        | `gh` with native CLI auth for repos and gists            |
 | Google        | `gws` plus Hermes' `google-workspace` skill              |
 | Docker        | inner `dockerd`, `docker`, `docker compose`, `buildx`    |
 | Git           | `git` with `gh` as credential helper                     |
@@ -249,7 +249,7 @@ For gists, never publish secrets, credentials, private repository contents, priv
 - Use a fresh git worktree and task branch for each coding task unless the user explicitly asks to reuse an existing worktree.
 - Do not push, open PRs, or commit unless the user explicitly asks.
 - Never commit directly on protected branches such as `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
-- Never paste secrets into chat, including `GH_TOKEN`, `TELEGRAM_BOT_TOKEN`, or anything from `.env`.
+- Never paste secrets into chat, including access tokens, OAuth callback URLs, Telegram tokens, or auth files under `/opt/data`.
 - Keep changes scoped to the requested task.
 - Surface sub-agent errors clearly.
 - Cite relevant lines when answering code questions.

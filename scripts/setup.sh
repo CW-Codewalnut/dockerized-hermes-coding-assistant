@@ -3,117 +3,40 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SERVICE="assistant"
 cd "$ROOT"
 
-ENV_FILE="$ROOT/.env"
-SERVICE="assistant"
-
-get_env() {
-  local key="$1"
-  [[ -f "$ENV_FILE" ]] || return 0
-  awk -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      val = substr($0, index($0, "=") + 1)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-      if (val ~ /^".*"$/ || val ~ /^'\''.*'\''$/) val = substr(val, 2, length(val) - 2)
-      print val
-      exit
-    }
-  ' "$ENV_FILE"
-}
-
-quote_env() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
-}
-
-set_env() {
-  local key="$1"
-  local value="$2"
-  local quoted
-  quoted="\"$(quote_env "$value")\""
-  awk -v key="$key" -v line="$key=$quoted" '
-    BEGIN { done = 0 }
-    $0 ~ "^[[:space:]]*" key "=" { print line; done = 1; next }
-    { print }
-    END { if (!done) print line }
-  ' "$ENV_FILE" > "$ENV_FILE.tmp"
-  mv "$ENV_FILE.tmp" "$ENV_FILE"
-}
-
-slugify() {
-  printf '%s' "$1" \
-    | tr '[:upper:]' '[:lower:]' \
-    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
-}
-
-prompt_env() {
-  local key="$1"
-  local label="$2"
-  local default="${3:-}"
-  local secret="${4:-false}"
-  local current input prompt
-  current="$(get_env "$key")"
-  [[ -n "$current" ]] && return 0
-
-  prompt="$label"
-  [[ -n "$default" ]] && prompt="$prompt [$default]"
-  prompt="$prompt: "
-
-  if [[ "$secret" == "true" ]]; then
-    read -r -s -p "$prompt" input
-    echo
-  else
-    read -r -p "$prompt" input
-  fi
-
-  input="${input:-$default}"
-  [[ -n "$input" ]] && set_env "$key" "$input"
-}
-
-prompt_github_token() {
-  local gh_token github_token
-  gh_token="$(get_env GH_TOKEN)"
-  github_token="$(get_env GITHUB_TOKEN)"
-
-  if [[ -z "$gh_token" && -n "$github_token" ]]; then
-    set_env GH_TOKEN "$github_token"
-    return 0
-  fi
-
-  prompt_env GH_TOKEN "GitHub classic PAT with repo/gist scopes" "" true
-}
-
-confirm() {
-  local prompt="$1"
-  local ans
-  read -r -p "$prompt [Y/n]: " ans
-  case "$ans" in
-    n|N|no|NO|No) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-print_google_workspace_skip_instructions() {
-  cat <<'EOF'
-Skipped Google Workspace setup.
-
-To finish later, rerun `scripts/setup.sh` and answer yes at the Google Workspace
-prompt, or follow the README "Google Workspace" section manually.
-
-You will need:
-  - a Google Cloud project;
-  - Gmail, Calendar, Drive, Sheets, Docs, and People APIs enabled as needed;
-  - an OAuth 2.0 Desktop client JSON downloaded from Google Cloud Console.
-EOF
-}
+# shellcheck source=scripts/lib/setup-store.sh
+source "$ROOT/scripts/lib/setup-store.sh"
+assistant_store_init "$ROOT"
 
 _SETUP_STTY_STATE=""
+SETUP_TEMP_FILES=()
+SETUP_CONTAINER_TEMP_SECRET=""
+
+cleanup_setup_temps() {
+  if [[ "${#SETUP_TEMP_FILES[@]}" -gt 0 ]]; then
+    rm -f "${SETUP_TEMP_FILES[@]}" 2>/dev/null || true
+  fi
+  if [[ -n "$SETUP_CONTAINER_TEMP_SECRET" ]]; then
+    compose exec -T "$SERVICE" rm -f "$SETUP_CONTAINER_TEMP_SECRET" >/dev/null 2>&1 || true
+  fi
+}
+
+setup_abort() {
+  setup_enable_echo
+  cleanup_setup_temps
+  echo
+  exit 130
+}
+
+trap setup_abort INT TERM
+trap cleanup_setup_temps EXIT
 
 setup_disable_echo() {
   if [[ -t 0 && -z "$_SETUP_STTY_STATE" ]]; then
     _SETUP_STTY_STATE="$(stty -g)"
     stty -echo
-    trap 'setup_enable_echo; echo; exit 130' INT TERM
   fi
 }
 
@@ -121,7 +44,6 @@ setup_enable_echo() {
   if [[ -n "$_SETUP_STTY_STATE" ]]; then
     stty "$_SETUP_STTY_STATE"
     _SETUP_STTY_STATE=""
-    trap - INT TERM
   fi
 }
 
@@ -158,22 +80,247 @@ read_google_client_secret_json() {
   echo
 }
 
+print_google_workspace_skip_instructions() {
+  cat <<'EOF'
+Skipped Google Workspace setup.
+
+To finish later, rerun `scripts/setup.sh` and answer yes at the Google Workspace
+prompt, or follow the README "Google Workspace" section manually.
+
+You will need:
+  - a Google Cloud project;
+  - Gmail, Calendar, Drive, Sheets, Docs, and People APIs enabled as needed;
+  - an OAuth 2.0 Desktop client JSON downloaded from Google Cloud Console.
+EOF
+}
+
+wait_for_container() {
+  echo
+  echo "Waiting for container ..."
+  for _ in {1..90}; do
+    if compose exec -T "$SERVICE" true >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  compose exec -T "$SERVICE" true >/dev/null
+}
+
+wait_for_inner_docker() {
+  echo "Waiting for inner Docker daemon ..."
+  for _ in {1..90}; do
+    if compose exec -T -u hermes "$SERVICE" docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  compose exec -T -u hermes "$SERVICE" docker info >/dev/null
+}
+
+normalize_bool_config() {
+  local key="$1"
+  local label="$2"
+  local default="$3"
+  local value
+
+  value="$(read_store_value config "$key" 2>/dev/null || true)"
+  if [[ -z "$value" ]]; then
+    prompt_stored_value config "$key" "$label" "$default" false false
+    value="$(read_store_value config "$key" 2>/dev/null || true)"
+  fi
+
+  case "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" in
+    true|yes|y|1) write_store_value config "$key" "true" ;;
+    false|no|n|0|"") write_store_value config "$key" "false" ;;
+    *)
+      echo "$label must be true or false."
+      rm -f "$(store_path config "$key")"
+      prompt_stored_value config "$key" "$label" "$default" false false
+      normalize_bool_config "$key" "$label" "$default"
+      ;;
+  esac
+}
+
+validate_slug_config() {
+  local key="$1"
+  local label="$2"
+  local default="$3"
+  local value
+
+  while true; do
+    value="$(read_store_value config "$key" 2>/dev/null || true)"
+    if [[ "$value" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+      return 0
+    fi
+    [[ -n "$value" ]] && echo "$label must use lowercase letters, numbers, and hyphens only."
+    rm -f "$(store_path config "$key")"
+    prompt_stored_value config "$key" "$label" "$default" false true
+  done
+}
+
+validate_branch_prefix_config() {
+  local key="$1"
+  local label="$2"
+  local default="$3"
+  local value
+
+  while true; do
+    value="$(read_store_value config "$key" 2>/dev/null || true)"
+    if [[ "$value" =~ ^[A-Za-z0-9._/-]+$ && "$value" != */ && "$value" != /* ]]; then
+      return 0
+    fi
+    [[ -n "$value" ]] && echo "$label must be a simple git branch prefix without spaces."
+    rm -f "$(store_path config "$key")"
+    prompt_stored_value config "$key" "$label" "$default" false true
+  done
+}
+
+validate_port_config() {
+  local key="$1"
+  local label="$2"
+  local default="$3"
+  local value
+
+  while true; do
+    value="$(read_store_value config "$key" 2>/dev/null || true)"
+    if [[ "$value" =~ ^[0-9]+$ && "$value" -ge 1 && "$value" -le 65535 ]]; then
+      return 0
+    fi
+    [[ -n "$value" ]] && echo "$label must be a TCP port from 1 to 65535."
+    rm -f "$(store_path config "$key")"
+    prompt_stored_value config "$key" "$label" "$default" false true
+  done
+}
+
+configure_local_profile() {
+  local assistant_name assistant_slug user_name api_enabled
+
+  ensure_store_dirs
+
+  echo "== Local identity =="
+  prompt_stored_value config assistant_name "Assistant name" "" false true
+  assistant_name="$(read_store_value config assistant_name)"
+  assistant_slug="$(slugify "$assistant_name")"
+  assistant_slug="${assistant_slug:-hermes-assistant}"
+  prompt_stored_value config assistant_slug "Docker-safe assistant slug" "$assistant_slug" false false
+  validate_slug_config assistant_slug "Docker-safe assistant slug" "$assistant_slug"
+  assistant_slug="$(read_store_value config assistant_slug)"
+  prompt_stored_value config user_name "User nickname the assistant should use" "" false true
+  user_name="$(read_store_value config user_name)"
+  prompt_stored_value config branch_prefix "Task branch prefix" "$assistant_slug" false false
+  validate_branch_prefix_config branch_prefix "Task branch prefix" "$assistant_slug"
+  prompt_stored_value config dashboard_port "Dashboard localhost port" "9119" false false
+  validate_port_config dashboard_port "Dashboard localhost port" "9119"
+  prompt_stored_value config api_port "API localhost port" "8642" false false
+  validate_port_config api_port "API localhost port" "8642"
+
+  if ! has_store_value config dockerd_storage_driver; then
+    write_store_value config dockerd_storage_driver "overlay2"
+  fi
+
+  normalize_bool_config api_server_enabled "Enable external API server" "false"
+  api_enabled="$(read_store_value config api_server_enabled)"
+  if [[ "$api_enabled" == "true" && ! -f "$(store_path secret api_server_key)" ]]; then
+    prompt_stored_value secret api_server_key "External API server key" "$(random_hex_32)" true true
+  fi
+
+  echo
+  echo "== Telegram =="
+  prompt_stored_value secret telegram_bot_token "Telegram bot token" "" true true
+  prompt_stored_value secret telegram_allowed_users "Telegram allowed user IDs, comma-separated" "" false true
+
+  # Avoid shellcheck warning for values intentionally read as validation above.
+  : "$user_name"
+}
+
+github_configured() {
+  compose exec -T -u hermes "$SERVICE" gh auth status -h github.com >/dev/null 2>&1
+}
+
+derive_git_identity_from_github() {
+  local login name id email changed_var="$1"
+  login="$(compose exec -T -u hermes "$SERVICE" gh api user --jq '.login' 2>/dev/null | tr -d '\r' || true)"
+  [[ -n "$login" ]] || return 1
+
+  name="$(compose exec -T -u hermes "$SERVICE" gh api user --jq '.name // .login' 2>/dev/null | tr -d '\r' || true)"
+  id="$(compose exec -T -u hermes "$SERVICE" gh api user --jq '.id | tostring' 2>/dev/null | tr -d '\r' || true)"
+  email="$(compose exec -T -u hermes "$SERVICE" gh api user --jq '.email // ""' 2>/dev/null | tr -d '\r' || true)"
+
+  name="${name:-$login}"
+  if [[ -z "$email" && -n "$id" ]]; then
+    email="${id}+${login}@users.noreply.github.com"
+  fi
+
+  if ! has_store_value config git_user_name; then
+    write_store_value config git_user_name "$name"
+    printf -v "$changed_var" '%s' "true"
+  fi
+
+  if ! has_store_value config git_user_email && [[ -n "$email" ]]; then
+    write_store_value config git_user_email "$email"
+    printf -v "$changed_var" '%s' "true"
+  fi
+
+  echo "GitHub account: $login"
+}
+
+prompt_missing_git_identity() {
+  local changed_var="$1"
+  local user_name
+  user_name="$(read_store_value config user_name 2>/dev/null || true)"
+
+  if ! has_store_value config git_user_name; then
+    prompt_stored_value config git_user_name "Git author name" "$user_name" false true
+    printf -v "$changed_var" '%s' "true"
+  fi
+
+  if ! has_store_value config git_user_email; then
+    prompt_stored_value config git_user_email "Git author email" "" false true
+    printf -v "$changed_var" '%s' "true"
+  fi
+}
+
+configure_github_and_git_identity() {
+  local token identity_changed_var="$1"
+
+  echo
+  echo "== GitHub and git identity =="
+  if github_configured; then
+    echo "GitHub CLI auth: already configured"
+    derive_git_identity_from_github "$identity_changed_var" || true
+  elif confirm "Authenticate GitHub CLI now"; then
+    read -r -s -p "GitHub classic PAT with repo/gist scopes: " token
+    echo
+    if [[ -n "$token" ]]; then
+      if printf '%s\n' "$token" | compose exec -T -u hermes "$SERVICE" gh auth login --hostname github.com --with-token; then
+        echo "GitHub CLI auth: configured"
+        derive_git_identity_from_github "$identity_changed_var" || true
+      else
+        echo "GitHub CLI auth failed; continuing without GitHub auth." >&2
+      fi
+    else
+      echo "GitHub CLI auth skipped."
+    fi
+  else
+    echo "GitHub CLI auth skipped."
+  fi
+
+  prompt_missing_git_identity "$identity_changed_var"
+}
+
 setup_google_workspace() {
   local gsetup container_secret client_secret_path auth_url oauth_callback
   local client_secret_source temp_secret_path
   gsetup='/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py"'
-  # Store the transfer file in the persistent data volume, not /tmp. On hardened
-  # VPS Compose configs /tmp is tmpfs, so a restart between `cp` and `exec` can
-  # otherwise make the copied file disappear before the setup command reads it.
   container_secret="/opt/data/.hermes-google-client-secret.json.tmp"
   temp_secret_path=""
 
   echo
   echo "== Google Workspace =="
 
-  docker compose exec -T -u hermes "$SERVICE" sh -lc 'command -v gws >/dev/null'
+  compose exec -T -u hermes "$SERVICE" sh -lc 'command -v gws >/dev/null'
 
-  if docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check" >/dev/null 2>&1; then
+  if compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check" >/dev/null 2>&1; then
     echo "Google Workspace auth: already configured"
     return 0
   fi
@@ -200,104 +347,99 @@ EOF
     return 0
   fi
 
-  if docker compose exec -T -u hermes "$SERVICE" test -s /opt/data/google_client_secret.json; then
+  if compose exec -T -u hermes "$SERVICE" test -s /opt/data/google_client_secret.json; then
     echo "Google OAuth client secret: already stored"
   else
-    if [[ -n "${GOOGLE_CLIENT_SECRET_B64:-}" ]]; then
-      temp_secret_path="$(mktemp)"
-      chmod 600 "$temp_secret_path"
-      if ! printf '%s' "$GOOGLE_CLIENT_SECRET_B64" | base64 --decode > "$temp_secret_path" 2>/dev/null; then
-        printf '%s' "$GOOGLE_CLIENT_SECRET_B64" | base64 -d > "$temp_secret_path"
-      fi
-      client_secret_path="$temp_secret_path"
-      echo "Google OAuth client secret: loaded from GOOGLE_CLIENT_SECRET_B64"
-    else
-      cat <<'EOF'
+    cat <<'EOF'
 Provide the OAuth Desktop client JSON.
 
 VPS-friendly default: paste the JSON contents. Secret input is hidden. You can
 also provide a file path if the JSON is already on this machine.
 EOF
 
-      setup_disable_echo
-      read -r -p "Source (hidden): paste JSON, or type path/skip [paste]: " client_secret_source || client_secret_source=""
-      echo
-      client_secret_source="${client_secret_source:-paste}"
+    setup_disable_echo
+    read -r -p "Source (hidden): paste JSON, or type path/skip [paste]: " client_secret_source || client_secret_source=""
+    echo
+    client_secret_source="${client_secret_source:-paste}"
 
-      case "$client_secret_source" in
-        \{*)
-          temp_secret_path="$(mktemp)"
-          chmod 600 "$temp_secret_path"
-          cat <<'EOF'
+    case "$client_secret_source" in
+      \{*)
+        temp_secret_path="$(mktemp)"
+        SETUP_TEMP_FILES+=("$temp_secret_path")
+        chmod 600 "$temp_secret_path"
+        cat <<'EOF'
 Detected JSON at the prompt. Input remains hidden. If it spans multiple lines, continue pasting.
 If the script keeps waiting after the final }, type END_GOOGLE_JSON.
 EOF
-          read_google_client_secret_json "$temp_secret_path" "$client_secret_source"
-          if [[ ! -s "$temp_secret_path" ]]; then
-            rm -f "$temp_secret_path"
-            print_google_workspace_skip_instructions
-            return 0
-          fi
-          client_secret_path="$temp_secret_path"
-          ;;
-        paste|p)
-          setup_enable_echo
-          temp_secret_path="$(mktemp)"
-          chmod 600 "$temp_secret_path"
-          cat <<'EOF'
+        read_google_client_secret_json "$temp_secret_path" "$client_secret_source"
+        if [[ ! -s "$temp_secret_path" ]]; then
+          rm -f "$temp_secret_path"
+          print_google_workspace_skip_instructions
+          return 0
+        fi
+        client_secret_path="$temp_secret_path"
+        ;;
+      paste|p)
+        setup_enable_echo
+        temp_secret_path="$(mktemp)"
+        SETUP_TEMP_FILES+=("$temp_secret_path")
+        chmod 600 "$temp_secret_path"
+        cat <<'EOF'
 Paste the full OAuth client JSON now. Input is hidden.
 The script continues automatically when the JSON is complete.
 If it keeps waiting after the final }, type END_GOOGLE_JSON on its own line.
 EOF
-          read_google_client_secret_json "$temp_secret_path"
-          if [[ ! -s "$temp_secret_path" ]]; then
-            rm -f "$temp_secret_path"
+        read_google_client_secret_json "$temp_secret_path"
+        if [[ ! -s "$temp_secret_path" ]]; then
+          rm -f "$temp_secret_path"
+          print_google_workspace_skip_instructions
+          return 0
+        fi
+        client_secret_path="$temp_secret_path"
+        ;;
+      path|file|f)
+        setup_enable_echo
+        while true; do
+          read -r -p "Path to OAuth Desktop client JSON (blank to skip): " client_secret_path
+          if [[ -z "$client_secret_path" ]]; then
             print_google_workspace_skip_instructions
             return 0
           fi
-          client_secret_path="$temp_secret_path"
-          ;;
-        path|file|f)
-          setup_enable_echo
-          while true; do
-            read -r -p "Path to OAuth Desktop client JSON (blank to skip): " client_secret_path
-            if [[ -z "$client_secret_path" ]]; then
-              print_google_workspace_skip_instructions
-              return 0
-            fi
-            if [[ -f "$client_secret_path" ]]; then
-              break
-            fi
-            echo "File not found: $client_secret_path"
-          done
-          ;;
-        skip|s)
-          setup_enable_echo
-          print_google_workspace_skip_instructions
-          return 0
-          ;;
-        *)
-          setup_enable_echo
-          echo "Unknown source: $client_secret_source" >&2
-          print_google_workspace_skip_instructions
-          return 0
-          ;;
-      esac
-    fi
+          if [[ -f "$client_secret_path" ]]; then
+            break
+          fi
+          echo "File not found: $client_secret_path"
+        done
+        ;;
+      skip|s)
+        setup_enable_echo
+        print_google_workspace_skip_instructions
+        return 0
+        ;;
+      *)
+        setup_enable_echo
+        echo "Unknown source: $client_secret_source" >&2
+        print_google_workspace_skip_instructions
+        return 0
+        ;;
+    esac
 
-    docker compose cp "$client_secret_path" "$SERVICE:$container_secret"
+    SETUP_CONTAINER_TEMP_SECRET="$container_secret"
+    compose cp "$client_secret_path" "$SERVICE:$container_secret"
     rm -f "$temp_secret_path"
-    docker compose exec -T "$SERVICE" sh -lc "chown 10000:10000 '$container_secret' && chmod 600 '$container_secret'"
-    if ! docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --client-secret '$container_secret'"; then
-      docker compose exec -T "$SERVICE" rm -f "$container_secret"
+    compose exec -T "$SERVICE" sh -lc "chown 10000:10000 '$container_secret' && chmod 600 '$container_secret'"
+    if ! compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --client-secret '$container_secret'"; then
+      compose exec -T "$SERVICE" rm -f "$container_secret"
+      SETUP_CONTAINER_TEMP_SECRET=""
       echo "Google OAuth client secret was not stored. Check that you pasted the full Desktop OAuth JSON." >&2
       print_google_workspace_skip_instructions
       return 0
     fi
-    docker compose exec -T "$SERVICE" rm -f "$container_secret"
+    compose exec -T "$SERVICE" rm -f "$container_secret"
+    SETUP_CONTAINER_TEMP_SECRET=""
   fi
 
-  if ! auth_url="$(docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-url")"; then
+  if ! auth_url="$(compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-url")"; then
     echo "Could not generate a Google auth URL. Rerun setup after checking the OAuth client JSON." >&2
     return 0
   fi
@@ -323,43 +465,19 @@ EOF
     return 0
   fi
 
-  docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-code \"\$1\"" sh "$oauth_callback"
+  if ! compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --auth-code \"\$1\"" sh "$oauth_callback"; then
+    echo "Google Workspace authorization failed. Rerun setup when you have a fresh redirect URL or auth code." >&2
+    return 0
+  fi
 
-  if docker compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check-live"; then
+  if compose exec -T -u hermes "$SERVICE" sh -lc "$gsetup --check-live"; then
     echo "Google Workspace auth: configured"
   else
     echo "Google Workspace token was stored, but live verification failed. Check enabled APIs and OAuth scopes." >&2
   fi
 }
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  cp .env.example "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-fi
-
-echo "== Local identity =="
-prompt_env ASSISTANT_NAME "Assistant name" "Hermes Assistant"
-assistant_name="$(get_env ASSISTANT_NAME)"
-prompt_env ASSISTANT_SLUG "Docker-safe assistant slug" "$(slugify "$assistant_name")"
-prompt_env USER_NAME "Primary user/team name" ""
-prompt_env GIT_USER_NAME "Git author name" "$(get_env USER_NAME)"
-prompt_env GIT_USER_EMAIL "Git author email" ""
-prompt_env BRANCH_PREFIX "Task branch prefix" "$(get_env ASSISTANT_SLUG)"
-prompt_env DASHBOARD_PORT "Dashboard localhost port" "9119"
-prompt_env API_PORT "API localhost port" "8642"
-prompt_env DOCKERD_STORAGE_DRIVER "Inner Docker storage driver" "overlay2"
-
-echo
-echo "== Credentials =="
-prompt_env TELEGRAM_BOT_TOKEN "Telegram bot token" "" true
-prompt_env TELEGRAM_ALLOWED_USERS "Telegram allowed user IDs, comma-separated" ""
-prompt_github_token
-if [[ -z "$(get_env CURSOR_API_KEY)" ]]; then
-  if confirm "Set Cursor API key for headless Cursor CLI now"; then
-    prompt_env CURSOR_API_KEY "Cursor API key" "" true
-  fi
-fi
-prompt_env API_SERVER_ENABLED "Enable external API server" "false"
+configure_local_profile
 
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Start Docker Desktop, then rerun scripts/setup.sh." >&2
@@ -368,47 +486,36 @@ fi
 
 echo
 echo "== Build and start =="
-docker compose up -d --build
+compose up -d --build
+wait_for_container
+wait_for_inner_docker
 
-echo
-echo "Waiting for container ..."
-for _ in {1..90}; do
-  if docker compose exec -T "$SERVICE" true >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-docker compose exec -T "$SERVICE" true >/dev/null
-
-echo "Waiting for inner Docker daemon ..."
-for _ in {1..90}; do
-  if docker compose exec -T -u hermes "$SERVICE" docker info >/dev/null 2>&1; then
-    break
-  fi
-  sleep 2
-done
-docker compose exec -T -u hermes "$SERVICE" docker info >/dev/null
+identity_changed=false
+configure_github_and_git_identity identity_changed
+if [[ "$identity_changed" == "true" ]]; then
+  echo
+  echo "Applying git identity to the running assistant ..."
+  compose up -d --force-recreate
+  wait_for_container
+  wait_for_inner_docker
+fi
 
 echo
 echo "== Interactive logins =="
 if confirm "Run Hermes model setup now"; then
-  docker compose exec -u hermes -it "$SERVICE" hermes setup model
+  compose exec -u hermes -it "$SERVICE" hermes setup model
 fi
 
 if confirm "Run Codex device login now"; then
-  docker compose exec -u hermes -it "$SERVICE" codex login --device-auth
+  compose exec -u hermes -it "$SERVICE" codex login --device-auth
 fi
 
 if confirm "Run OpenCode auth login now"; then
-  docker compose exec -u hermes -it "$SERVICE" opencode auth login
+  compose exec -u hermes -it "$SERVICE" opencode auth login
 fi
 
-if [[ -z "$(get_env CURSOR_API_KEY)" ]]; then
-  if confirm "Run Cursor browser login now"; then
-    docker compose exec -u hermes -it "$SERVICE" agent login
-  fi
-else
-  echo "Cursor API key: present; skipping Cursor browser login prompt"
+if confirm "Run Cursor browser login now"; then
+  compose exec -u hermes -it "$SERVICE" agent login
 fi
 
 setup_google_workspace
@@ -422,12 +529,12 @@ echo
 case "$smoke_status" in
   0)
     echo "Setup complete."
-    echo "Dashboard: http://localhost:$(get_env DASHBOARD_PORT)"
+    echo "Dashboard: http://localhost:$(read_store_value config dashboard_port)"
     ;;
   2)
     echo "Setup finished, but optional smoke checks need attention."
     echo "Fix the warnings above, then rerun: scripts/smoke-test.sh"
-    echo "Dashboard: http://localhost:$(get_env DASHBOARD_PORT)"
+    echo "Dashboard: http://localhost:$(read_store_value config dashboard_port)"
     ;;
   *)
     echo "Setup failed required smoke tests. Fix the failures above, then rerun: scripts/smoke-test.sh" >&2

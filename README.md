@@ -10,6 +10,7 @@ Most assistant setups are either too thin to be useful for real engineering work
 
 - one command gets a persistent Telegram-accessible coding assistant running;
 - every repo checkout, agent auth file, memory, and Docker layer lives in named volumes;
+- setup prompts for identity, ports, and credentials instead of asking you to edit a credential file;
 - the assistant can use Docker from inside Docker without host path mismatches;
 - coding work is isolated in fresh git worktrees by default;
 - Codex is the default local coding sub-agent; OpenCode and Cursor are available when explicitly requested;
@@ -22,7 +23,7 @@ The goal is a portable personal development machine for AI coding workflows: rep
 - Hermes Agent running from the official Nous image.
 - Telegram as the chat surface, with localhost dashboard/API ports.
 - Codex CLI, OpenCode CLI, and Cursor Agent CLI installed together.
-- GitHub CLI wired through `GH_TOKEN` for repos, PRs, issues, and gists.
+- GitHub CLI using its native auth store for repos, PRs, issues, and gists.
 - Full dev toolbox: Node, Bun, Python, uv, Go, Rust, compilers, debuggers, `rg`, `fd`, `jq`, `yq`, `shellcheck`, `shfmt`, and more.
 - Privileged Docker-in-Docker with Docker CLI, Compose, and Buildx.
 - Persistent `/workbench` for canonical clones and per-task worktrees.
@@ -35,7 +36,9 @@ This is intentionally not a minimal production container. It is a trusted develo
 
 - **Power over sandbox minimalism:** privileged container, passwordless `sudo`, broad tools, and a real inner Docker daemon.
 - **Docker-in-Docker over host socket:** avoids bind-mount path mismatches when agents run repo-local Docker commands from `/workbench`.
-- **Worktrees by default:** canonical clones stay clean; each coding task gets `/workbench/<owner>/<repo>-worktrees/<task-slug>`.
+- **Prompted setup over editable secret files:** `scripts/setup.sh` asks for credentials and writes a local setup profile under `.assistant/`.
+- **Native auth stores:** GitHub, Codex, OpenCode, Cursor, and Google auth are stored by the tools that consume them.
+- **Worktrees by default:** canonical clones stay clean; each coding task gets `/workbench/<owner>/<repo>-worktrees/<task-slug>/`.
 - **Protected branches stay protected:** no commits directly on `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
 - **Delegation stays faithful:** Hermes shows the exact sub-agent prompt before delegation, passes the user's request through with only typo/grammar cleanup and minimal routing context, and defaults to Codex unless the user explicitly chooses OpenCode or Cursor.
 - **Cursor stays repo-scoped:** Cursor runs from the task worktree, never from all of `/workbench`.
@@ -48,9 +51,8 @@ This is intentionally not a minimal production container. It is a trusted develo
 - Privileged containers enabled. This is required for the in-container Docker daemon.
 - Git.
 - Telegram bot token from `@BotFather`.
-- GitHub classic PAT with `repo` and `gist`; add `read:org` for org repos.
+- GitHub classic PAT with `repo` and `gist`; add `read:org` for org repos. Optional, but recommended.
 - 8 GB Docker/host memory minimum; 16 GB or more is better.
-- Optional: Cursor API key for headless Cursor runs.
 - Optional: Google OAuth Desktop client JSON for Gmail, Calendar, Drive, Docs, Sheets, or Contacts.
 
 Dashboard and API ports bind to `127.0.0.1`. Telegram uses outbound polling, so normal chat use does not require public inbound ports.
@@ -60,52 +62,53 @@ Dashboard and API ports bind to `127.0.0.1`. Telegram uses outbound polling, so 
 ```bash
 git clone <this-repo-url> hermes-assistant
 cd hermes-assistant
-
-cp .env.example .env
-chmod 600 .env
-vi .env
-
 scripts/setup.sh
 ```
 
-`scripts/setup.sh` prompts for missing values, builds the container, starts Hermes, runs optional auth flows, configures Google Workspace if requested, and finishes with smoke tests.
+Setup prompts for:
 
-Important `.env` values:
+| Prompt                              | Default / behavior                                                               |
+| ----------------------------------- | -------------------------------------------------------------------------------- |
+| Assistant name                      | Required. Used in persona, attribution, and generated instructions.              |
+| Assistant slug                      | Optional. Defaults to a Docker-safe slug from the assistant name.                |
+| User nickname                       | Required. This is how the assistant refers to the primary operator.              |
+| Branch prefix                       | Optional. Defaults to the assistant slug.                                        |
+| Dashboard/API localhost ports       | Defaults to `9119` and `8642`.                                                   |
+| External API server                 | Defaults to disabled. If enabled, setup creates or prompts for an API key.       |
+| Telegram bot token and allowed IDs  | Required for chat access.                                                        |
+| GitHub auth                         | Optional. If configured, setup derives git author defaults from GitHub.          |
+| Git author name/email               | Required. Prompted only when GitHub cannot provide them.                         |
+| Hermes, Codex, OpenCode, Cursor     | Optional interactive auth flows.                                                 |
+| Google Workspace                    | Optional OAuth setup by pasted JSON or local JSON file path.                     |
 
-| Key                                                | Purpose                                                                        |
-| -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `ASSISTANT_NAME`, `ASSISTANT_SLUG`, `USER_NAME`    | Assistant identity and Docker naming.                                          |
-| `GIT_USER_NAME`, `GIT_USER_EMAIL`, `BRANCH_PREFIX` | Git author identity and branch prefix for workbench repos.                     |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`     | Telegram access.                                                               |
-| `GH_TOKEN`                                         | GitHub auth for `gh`, git push, PRs, issues, and gists. `GITHUB_TOKEN` is accepted as a setup alias. |
-| `CURSOR_API_KEY`                                   | Optional Cursor Agent auth for headless `agent -p`.                            |
-| `DOCKERD_STORAGE_DRIVER`                           | Inner Docker storage driver. Keep `overlay2` unless setup tells you otherwise. |
-
-Do not commit `.env` or exported backups.
+The local setup profile lives under `.assistant/`, which is ignored by git and mounted read-only into the container. Do not commit that directory.
 
 ## Operations
 
+Use the wrapper so Compose receives the assistant slug and port values from the setup profile:
+
 ```bash
-docker compose up -d
-docker compose logs -f assistant
-docker compose restart assistant
-docker compose down
+scripts/compose.sh up -d
+scripts/compose.sh logs -f assistant
+scripts/compose.sh restart assistant
+scripts/compose.sh down
 ```
 
 Open a shell or Hermes CLI:
 
 ```bash
-docker compose exec -u hermes -it assistant sh
-docker compose exec -u hermes -it assistant hermes
+scripts/compose.sh exec -u hermes -it assistant sh
+scripts/compose.sh exec -u hermes -it assistant hermes
 ```
 
 Re-run auth manually:
 
 ```bash
-docker compose exec -u hermes -it assistant hermes setup model
-docker compose exec -u hermes -it assistant codex login --device-auth
-docker compose exec -u hermes -it assistant opencode auth login
-docker compose exec -u hermes -it assistant agent login
+scripts/compose.sh exec -u hermes -it assistant hermes setup model
+scripts/compose.sh exec -u hermes -it assistant codex login --device-auth
+scripts/compose.sh exec -u hermes -it assistant opencode auth login
+scripts/compose.sh exec -u hermes -it assistant agent login
+scripts/compose.sh exec -u hermes -it assistant gh auth login
 ```
 
 Run smoke tests after setup or after changing auth:
@@ -114,12 +117,12 @@ Run smoke tests after setup or after changing auth:
 scripts/smoke-test.sh
 ```
 
-Required smoke checks cover Telegram, GitHub, Hermes, and the inner Docker daemon. Codex, OpenCode, Cursor, and Google Workspace report optional warnings when auth is missing or invalid.
+Required smoke checks cover the container, Telegram, Hermes, and the inner Docker daemon. GitHub, Codex, OpenCode, Cursor, and Google Workspace report optional warnings when auth is missing or invalid.
 
 Dashboard:
 
 ```text
-http://localhost:<DASHBOARD_PORT>
+http://localhost:<dashboard-port>
 ```
 
 ## Model Defaults
@@ -144,30 +147,20 @@ Runtime state is stored in named Docker volumes:
 
 | Volume                        | Contains                                                        |
 | ----------------------------- | --------------------------------------------------------------- |
-| `${ASSISTANT_SLUG}_data`      | Hermes config, memories, logs, instructions, and auth.          |
-| `${ASSISTANT_SLUG}_workbench` | Canonical repo checkouts and task worktrees under `/workbench`. |
-| `${ASSISTANT_SLUG}_docker`    | Inner Docker images, containers, volumes, and build cache.      |
+| `${assistant-slug}_data`      | Hermes config, memories, logs, instructions, and auth.          |
+| `${assistant-slug}_workbench` | Canonical repo checkouts and task worktrees under `/workbench`. |
+| `${assistant-slug}_docker`    | Inner Docker images, containers, volumes, and build cache.      |
+
+The inner Docker daemon uses `overlay2`. If that fails in an unusual nested setup, set `.assistant/config/dockerd_storage_driver` to `fuse-overlayfs`, then recreate the container with `scripts/compose.sh up -d --force-recreate`.
 
 ## Google Workspace
 
-Google Workspace is optional. During setup, answer yes at the Google prompt and provide an OAuth 2.0 Desktop client JSON. The setup stores:
+Google Workspace is optional. During setup, answer yes at the Google prompt and provide an OAuth 2.0 Desktop client JSON by pasting the JSON or giving a local file path. The setup stores:
 
 - `/opt/data/google_client_secret.json`
 - `/opt/data/google_token.json`
 
-For non-interactive transfer:
-
-```bash
-GOOGLE_CLIENT_SECRET_B64="$(base64 -w0 /path/to/client_secret.json)" scripts/setup.sh
-```
-
-On macOS:
-
-```bash
-GOOGLE_CLIENT_SECRET_B64="$(base64 -i /path/to/client_secret.json | tr -d '\n')" scripts/setup.sh
-```
-
-Treat Google client secrets, Google tokens, OAuth callback URLs containing `code=`, `.env`, and backups as secrets.
+Treat Google client secrets, Google tokens, OAuth callback URLs containing `code=`, and full sensitive backups as secrets.
 
 ## Public Attribution
 
@@ -182,10 +175,16 @@ This applies to commit bodies, PR descriptions, PR reviews, issue comments, publ
 
 ## Backup, Restore, Wipe
 
-Create a backup:
+Create a backup with setup profile config but without known auth stores:
 
 ```bash
 scripts/backup-state.sh
+```
+
+Create a full sensitive backup:
+
+```bash
+scripts/backup-state.sh --include-secrets
 ```
 
 Restore:
@@ -195,7 +194,7 @@ scripts/restore-state.sh <backup.tar.gz>
 scripts/setup.sh
 ```
 
-Backups include `.env`, Hermes state, repo checkouts, and inner Docker state. They contain secrets and can be large.
+Default backups include the non-secret setup profile, Hermes state, repo checkouts, and inner Docker state, but remove setup secrets and known auth stores such as GitHub, Codex, OpenCode, Cursor, and Google credentials. Full backups can contain credentials and can be large.
 
 Wipe this assistant's Docker footprint:
 
@@ -214,22 +213,22 @@ Use `--prune-system` carefully; it can remove unrelated stopped containers and u
 
 ## Files
 
-| Path                                                                           | Purpose                                |
-| ------------------------------------------------------------------------------ | -------------------------------------- |
-| `Dockerfile`                                                                   | Builds Hermes plus tooling.            |
-| `docker-compose.yml`                                                           | Runs the assistant and volumes.        |
-| `.env.example`                                                                 | Environment template.                  |
-| `templates/assistant/SOUL.md`                                                  | Assistant persona.                     |
-| `templates/assistant/AGENTS.md`                                                | Main assistant operating rules.        |
-| `templates/assistant/coding-agents/AGENTS.md`                                  | Shared Codex/OpenCode sub-agent rules. |
-| `scripts/setup.sh`                                                             | Setup flow.                            |
-| `scripts/smoke-test.sh`                                                        | Post-setup checks.                     |
-| `scripts/backup-state.sh`, `scripts/restore-state.sh`, `scripts/clean-wipe.sh` | State management.                      |
+| Path                                                                           | Purpose                                      |
+| ------------------------------------------------------------------------------ | -------------------------------------------- |
+| `Dockerfile`                                                                   | Builds Hermes plus tooling.                  |
+| `docker-compose.yml`                                                           | Runs the assistant and volumes.              |
+| `scripts/setup.sh`                                                             | Interactive setup flow.                      |
+| `scripts/compose.sh`                                                           | Compose wrapper that loads the setup profile. |
+| `scripts/lib/setup-store.sh`                                                   | Shared local setup profile helpers.          |
+| `scripts/smoke-test.sh`                                                        | Post-setup checks.                           |
+| `scripts/backup-state.sh`, `scripts/restore-state.sh`, `scripts/clean-wipe.sh` | State management.                            |
+| `templates/assistant/SOUL.md`                                                  | Assistant persona.                           |
+| `templates/assistant/AGENTS.md`                                                | Main assistant operating rules.              |
+| `templates/assistant/coding-agents/AGENTS.md`                                  | Shared Codex/OpenCode sub-agent rules.       |
 
 ## Troubleshooting
 
 - Start with `scripts/smoke-test.sh`.
-- For startup failures, run `docker compose logs assistant`.
-- For auth issues, rerun the matching login command from the Operations section.
-- If inner Docker fails, try `DOCKERD_STORAGE_DRIVER=fuse-overlayfs` in `.env`, then rebuild.
-- If ports conflict, change `DASHBOARD_PORT` or `API_PORT` in `.env`.
+- For startup failures, run `scripts/compose.sh logs assistant`.
+- For auth issues, rerun the matching login command from the Operations section or rerun `scripts/setup.sh`.
+- If ports conflict, edit `.assistant/config/dashboard_port` or `.assistant/config/api_port`, then run `scripts/compose.sh up -d --force-recreate`.

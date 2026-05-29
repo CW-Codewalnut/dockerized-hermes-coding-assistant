@@ -1,10 +1,11 @@
-# Local secrets and environment
-.env
-.env.*
-!.env.example
+# Local setup state and accidental secret files
+.assistant/
+.*
+!.dockerignore
+!.gitignore
 
-# Legacy/runtime state. Current runtime state lives in Docker volumes, but keep
-# these ignored in case older bind-mount folders or local restores exist.
+# Runtime state lives in Docker volumes, but keep these ignored in case local
+# restore folders exist.
 data/
 workbench/
 

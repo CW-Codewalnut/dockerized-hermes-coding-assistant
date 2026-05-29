@@ -13,7 +13,6 @@ ENV NVM_DIR=/usr/local/nvm
 ENV DOCKER_HOST=unix:///var/run/docker.sock
 ENV DOCKER_BUILDKIT=1
 ENV COMPOSE_DOCKER_CLI_BUILD=1
-ENV DOCKERD_STORAGE_DRIVER=overlay2
 
 # ---------------------------------------------------------------------------
 # Apt repos: official GitHub CLI, official Docker Engine, and a broad
@@ -113,9 +112,9 @@ RUN install -d -m 0755 /opt/cursor-agent \
        && chmod -R u+rwX,go+rX /opt/cursor-agent
 
 # Configure git: let gh act as the credential helper for github.com so
-# `git push` works without ever materialising the PAT on disk.
-# The commit author identity is configured at container startup from
-# GIT_USER_NAME and GIT_USER_EMAIL in .env.
+# `git push` works through the GitHub CLI's native auth store.
+# The commit author identity is configured at container startup from the
+# setup-owned profile mounted by Compose.
 RUN git config --system credential.https://github.com.helper "" \
        && git config --system --add credential.https://github.com.helper "!gh auth git-credential" \
        && git config --system credential.https://gist.github.com.helper "" \
@@ -136,11 +135,15 @@ RUN install -d -m 0755 /etc/services.d/dockerd \
        '#!/usr/bin/env bash' \
        'set -euo pipefail' \
        'mkdir -p /var/run /var/lib/docker' \
-       'exec dockerd --host=unix:///var/run/docker.sock --group='"$HERMES_GROUP"' --data-root=/var/lib/docker --storage-driver="${DOCKERD_STORAGE_DRIVER:-overlay2}"' \
+       'driver=""' \
+       'profile_driver="/run/hermes-assistant/config/dockerd_storage_driver"' \
+       'if [ -z "$driver" ] && [ -r "$profile_driver" ]; then IFS= read -r driver < "$profile_driver" || driver=""; fi' \
+       'driver="${driver:-${DOCKERD_STORAGE_DRIVER:-overlay2}}"' \
+       'exec dockerd --host=unix:///var/run/docker.sock --group='"$HERMES_GROUP"' --data-root=/var/lib/docker --storage-driver="$driver"' \
        > /etc/services.d/dockerd/run \
        && chmod +x /etc/services.d/dockerd/run
 
-# Symlink the Hermes CLI onto /usr/local/bin so `docker compose exec assistant
+# Symlink the Hermes CLI onto /usr/local/bin so `scripts/compose.sh exec assistant
 # hermes ...` works. The hermes binary lives inside Hermes' Python venv at
 # /opt/hermes/.venv/bin/hermes and is only on PATH while the venv is activated
 # (the base entrypoint sources activate before exec'ing hermes). Interactive
@@ -222,7 +225,9 @@ RUN node --version && npm --version && bun --version && uv --version \
 # relies on repo-local Cursor rules.
 COPY templates/assistant /opt/hermes-assistant/templates/assistant
 COPY scripts/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
+COPY scripts/hermes-assistant-run.sh /usr/local/bin/hermes-assistant-run
 RUN chmod +x /usr/local/bin/hermes-entrypoint.sh \
+       && chmod +x /usr/local/bin/hermes-assistant-run \
        && install -D -m 0755 /usr/local/bin/hermes-entrypoint.sh /etc/cont-init.d/99-hermes-assistant-setup
 
 WORKDIR /opt/data

@@ -5,6 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# shellcheck source=scripts/lib/setup-store.sh
+source "$ROOT/scripts/lib/setup-store.sh"
+assistant_store_init "$ROOT"
+
 SERVICE="${1:-assistant}"
 REQUIRED_FAILED=0
 OPTIONAL_FAILED=0
@@ -49,44 +53,53 @@ run_optional() {
 }
 
 assistant_exec() {
-  docker compose exec -T "$SERVICE" "$@"
+  compose exec -T "$SERVICE" "$@"
 }
 
 hermes_exec() {
-  docker compose exec -T -u hermes "$SERVICE" "$@"
+  compose exec -T -u hermes "$SERVICE" "$@"
 }
 
 section "Container"
 run_required "container responds" assistant_exec true
 run_required "runtime instructions rendered" assistant_exec sh -lc '
   set -eu
+  config_dir="${ASSISTANT_CONFIG_DIR:-/run/hermes-assistant/config}"
+  assistant_name="$(sed -n "1p" "$config_dir/assistant_name")"
+  assistant_slug="$(sed -n "1p" "$config_dir/assistant_slug")"
+  user_name="$(sed -n "1p" "$config_dir/user_name")"
+  git_user_name="$(sed -n "1p" "$config_dir/git_user_name")"
+  git_user_email="$(sed -n "1p" "$config_dir/git_user_email")"
+
   ! grep -R "<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>" \
     /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
-  test -n "${ASSISTANT_NAME:-}"
-  test -n "${USER_NAME:-}"
-  grep -F "# ${ASSISTANT_NAME}" /opt/data/SOUL.md >/dev/null
-  grep -F "Primary operator: **${USER_NAME}**." /opt/data/SOUL.md >/dev/null
-  grep -F "The primary operator is **${USER_NAME}**." /opt/data/AGENTS.md >/dev/null
-  grep -F "The primary user is **${USER_NAME}**." /opt/data/coding-agents/AGENTS.md >/dev/null
-  echo "  Assistant name: ${ASSISTANT_NAME}"
-  echo "  Assistant slug: ${ASSISTANT_SLUG:-unset}"
-  echo "  Primary operator: ${USER_NAME}"
-  echo "  Git author: ${GIT_USER_NAME:-unset} <${GIT_USER_EMAIL:-unset}>"
+  test -n "$assistant_name"
+  test -n "$user_name"
+  grep -F "# ${assistant_name}" /opt/data/SOUL.md >/dev/null
+  grep -F "Primary operator: **${user_name}**." /opt/data/SOUL.md >/dev/null
+  grep -F "The primary operator is **${user_name}**." /opt/data/AGENTS.md >/dev/null
+  grep -F "The primary user is **${user_name}**." /opt/data/coding-agents/AGENTS.md >/dev/null
+  echo "  Assistant name: ${assistant_name}"
+  echo "  Assistant slug: ${assistant_slug}"
+  echo "  Primary operator: ${user_name}"
+  echo "  Git author: ${git_user_name} <${git_user_email}>"
 '
 
 section "Telegram"
 run_required "bot token present and valid" assistant_exec sh -lc '
   set -eu
-  test -n "${TELEGRAM_BOT_TOKEN:-}"
-  test -n "${TELEGRAM_ALLOWED_USERS:-}"
-  ok="$(curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" | jq -r .ok)"
+  secrets_dir="${ASSISTANT_SECRETS_DIR:-/run/hermes-assistant/secrets}"
+  token="$(sed -n "1p" "$secrets_dir/telegram_bot_token")"
+  allowed_users="$(sed -n "1p" "$secrets_dir/telegram_allowed_users")"
+  test -n "$token"
+  test -n "$allowed_users"
+  ok="$(curl -fsS "https://api.telegram.org/bot${token}/getMe" | jq -r .ok)"
   test "$ok" = "true"
 '
 
 section "GitHub CLI"
-run_required "GitHub token auth, API, repo scope, and gist scope" assistant_exec sh -lc '
+run_optional "GitHub CLI auth, API, repo scope, and gist scope" hermes_exec sh -lc '
   set -eu
-  test -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   gh auth status -h github.com >/dev/null
   login="$(gh api user --jq .login)"
   echo "  GitHub account: $login"
@@ -151,7 +164,6 @@ run_optional "Cursor version, auth status, and model list" hermes_exec sh -lc '
   }
 
   cursor_auth_hint() {
-    [ -n "${CURSOR_API_KEY:-}" ] && return 0
     if [ -s "$HOME/.cursor/cli-config.json" ] &&
       grep -Eiq "\"(auth|token|api[_-]?key|access[_-]?token|refresh[_-]?token|user|email|account)\"" "$HOME/.cursor/cli-config.json"; then
       return 0

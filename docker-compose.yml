@@ -1,26 +1,30 @@
-name: ${ASSISTANT_SLUG:-hermes-assistant}
+name: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}
 
 services:
   assistant:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${ASSISTANT_SLUG:-hermes-assistant}:local
-    container_name: ${ASSISTANT_SLUG:-hermes-assistant}
+    image: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}:local
+    container_name: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}
     restart: unless-stopped
-    command: gateway run
-    env_file: .env
+    command: hermes-assistant-run
     environment:
-      # Hard-pin a few things so behaviour is deterministic regardless of .env content.
+      # Hard-pin runtime paths and Docker settings; setup values are mounted as files.
       HERMES_DASHBOARD: "1"
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_BUILDKIT: "1"
       COMPOSE_DOCKER_CLI_BUILD: "1"
+      ASSISTANT_CONFIG_DIR: /run/hermes-assistant/config
+      ASSISTANT_SECRETS_DIR: /run/hermes-assistant/secrets
     ports:
       # Bind to localhost only. Never 0.0.0.0 on a personal machine.
-      - "127.0.0.1:${API_PORT:-8642}:8642" # OpenAI-compatible API
-      - "127.0.0.1:${DASHBOARD_PORT:-9119}:9119" # Web dashboard
+      - "127.0.0.1:${ROCKY_API_PORT:-8642}:8642" # OpenAI-compatible API
+      - "127.0.0.1:${ROCKY_DASHBOARD_PORT:-9119}:9119" # Web dashboard
     volumes:
+      # Setup profile: created by scripts/setup.sh and loaded through scripts/compose.sh.
+      - ./.assistant/config:/run/hermes-assistant/config:ro
+      - ./.assistant/secrets:/run/hermes-assistant/secrets:ro
       # Runtime state: named Docker volumes, not host bind mounts. Export these
       # volumes to migrate the assistant to another machine.
       - hermes_data:/opt/data
@@ -52,8 +56,8 @@ services:
 
 volumes:
   hermes_data:
-    name: ${ASSISTANT_SLUG:-hermes-assistant}_data
+    name: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}_data
   hermes_workbench:
-    name: ${ASSISTANT_SLUG:-hermes-assistant}_workbench
+    name: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}_workbench
   hermes_docker:
-    name: ${ASSISTANT_SLUG:-hermes-assistant}_docker
+    name: ${ROCKY_ASSISTANT_SLUG:-hermes-assistant}_docker

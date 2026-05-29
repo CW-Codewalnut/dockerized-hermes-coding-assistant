@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Remove this assistant's runtime footprint while preserving source files and .env.
+# Remove this assistant's runtime footprint while preserving source files and local setup profile.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+# shellcheck source=scripts/lib/setup-store.sh
+source "$ROOT/scripts/lib/setup-store.sh"
+assistant_store_init "$ROOT"
 
 YES=false
 PRUNE_SYSTEM=false
@@ -15,21 +19,7 @@ for arg in "$@"; do
   esac
 done
 
-get_env() {
-  local key="$1"
-  [[ -f .env ]] || return 0
-  awk -v key="$key" '
-    $0 ~ "^[[:space:]]*" key "=" {
-      val = substr($0, index($0, "=") + 1)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
-      if (val ~ /^".*"$/ || val ~ /^'\''.*'\''$/) val = substr(val, 2, length(val) - 2)
-      print val
-      exit
-    }
-  ' .env
-}
-
-SLUG="$(get_env ASSISTANT_SLUG)"
+SLUG="$(read_store_value config assistant_slug 2>/dev/null || true)"
 SLUG="${SLUG:-hermes-assistant}"
 
 if [[ "$YES" != true ]]; then
@@ -42,7 +32,7 @@ if [[ "$YES" != true ]]; then
     echo "  - unused Docker containers/images/networks across the whole machine"
   fi
   echo "Preserved:"
-  echo "  - .env"
+  echo "  - .assistant/"
   echo "  - source files"
   read -rp "Continue? [y/N] " ans
   case "$ans" in
@@ -53,7 +43,7 @@ fi
 
 echo
 echo "[1/5] Compose down ..."
-docker compose down --remove-orphans -v 2>&1 | sed 's/^/    /' || true
+compose down --remove-orphans -v 2>&1 | sed 's/^/    /' || true
 
 echo
 echo "[2/5] Removing assistant container ..."

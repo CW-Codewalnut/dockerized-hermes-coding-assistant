@@ -24,6 +24,7 @@ set -euo pipefail
 
 TEMPLATE_DATA="/opt/hermes-assistant/templates/assistant"
 RULES_SRC="/opt/data/coding-agents/AGENTS.md"
+CONFIG_DIR="${ASSISTANT_CONFIG_DIR:-/run/hermes-assistant/config}"
 
 mkdir -p /opt/data /opt/data/coding-agents /workbench
 
@@ -50,9 +51,23 @@ runtime_env() {
   local key="$1"
   local fallback="$2"
   local value=""
+  local profile_key=""
   value="${!key:-}"
   if [[ -z "$value" && -f "/run/s6/container_environment/$key" ]]; then
     value="$(tr -d '\000' < "/run/s6/container_environment/$key")"
+  fi
+  if [[ -z "$value" ]]; then
+    case "$key" in
+      ASSISTANT_NAME) profile_key="assistant_name" ;;
+      USER_NAME) profile_key="user_name" ;;
+      GIT_USER_NAME) profile_key="git_user_name" ;;
+      GIT_USER_EMAIL) profile_key="git_user_email" ;;
+      BRANCH_PREFIX) profile_key="branch_prefix" ;;
+      DOCKERD_STORAGE_DRIVER) profile_key="dockerd_storage_driver" ;;
+    esac
+    if [[ -n "$profile_key" && -f "$CONFIG_DIR/$profile_key" ]]; then
+      IFS= read -r value < "$CONFIG_DIR/$profile_key" || value=""
+    fi
   fi
   printf '%s' "${value:-$fallback}"
 }
@@ -61,8 +76,7 @@ escape_template_value() {
   printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
 }
 
-# Render operational instructions from the current environment on every start
-# so .env identity changes are reflected after container recreation.
+# Render operational instructions from the current setup profile on every start.
 if [[ -f "$TEMPLATE_DATA/SOUL.md" ]]; then
   render_template "$TEMPLATE_DATA/SOUL.md" /opt/data/SOUL.md
 fi
@@ -89,9 +103,6 @@ terminal:
   timeout: 7200
   persistent_shell: true
   env_passthrough:
-    - GH_TOKEN
-    - GITHUB_TOKEN
-    - CURSOR_API_KEY
     - DOCKER_HOST
     - DOCKER_BUILDKIT
     - COMPOSE_DOCKER_CLI_BUILD
@@ -119,12 +130,6 @@ session_reset:
 EOF
 fi
 
-if [[ -f /opt/data/config.yaml ]] &&
-  ! grep -Eq '^[[:space:]]*-[[:space:]]*GITHUB_TOKEN[[:space:]]*$' /opt/data/config.yaml &&
-  grep -Eq '^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$' /opt/data/config.yaml; then
-  sed -i '/^[[:space:]]*-[[:space:]]*GH_TOKEN[[:space:]]*$/a\    - GITHUB_TOKEN' /opt/data/config.yaml
-fi
-
 chown -R 10000:10000 /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents /opt/data/config.yaml 2>/dev/null || true
 chown -R 10000:10000 /workbench 2>/dev/null || true
 
@@ -134,7 +139,7 @@ chown -R 10000:10000 /workbench 2>/dev/null || true
 # spawned subprocesses to ${HERMES_HOME}/home/ — but ONLY when that directory
 # exists. If left enabled, coding agents spawned through the assistant's
 # terminal tool would write auth + state under /opt/data/home, while interactive
-# `docker compose exec -u hermes assistant <tool> login` writes to /opt/data.
+# `scripts/compose.sh exec -u hermes assistant <tool> login` writes to /opt/data.
 # We don't need the isolation — hermes' real HOME (/opt/data) is already
 # persistent — so we delete the marker dir on every boot to keep all coding-agent
 # invocations looking at the same auth/config paths.
@@ -154,12 +159,15 @@ else
   echo "hermes-entrypoint: WARNING $RULES_SRC missing; coding agents will run without global rules" >&2
 fi
 
-if [[ -n "${GIT_USER_NAME:-}" ]]; then
-  git config --system user.name "$GIT_USER_NAME"
+git_user_name="$(runtime_env GIT_USER_NAME "")"
+git_user_email="$(runtime_env GIT_USER_EMAIL "")"
+
+if [[ -n "$git_user_name" ]]; then
+  git config --system user.name "$git_user_name"
 fi
 
-if [[ -n "${GIT_USER_EMAIL:-}" ]]; then
-  git config --system user.email "$GIT_USER_EMAIL"
+if [[ -n "$git_user_email" ]]; then
+  git config --system user.email "$git_user_email"
 fi
 
 # Seed "yolo" defaults for the coding sub-agents. The assistant spawns tools
