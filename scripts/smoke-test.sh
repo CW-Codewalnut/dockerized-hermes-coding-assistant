@@ -110,6 +110,10 @@ run_required "bot token and allowed users present" assistant_exec sh -lc '
   allowed_users="$(sed -n "1p" "$secrets_dir/telegram_allowed_users")"
   test -n "$token"
   test -n "$allowed_users"
+  if [ -d /run/s6/container_environment ]; then
+    test "$(cat /run/s6/container_environment/TELEGRAM_BOT_TOKEN)" = "$token"
+    test "$(cat /run/s6/container_environment/TELEGRAM_ALLOWED_USERS)" = "$allowed_users"
+  fi
 '
 run_optional "bot token live check" assistant_exec sh -lc '
   set -eu

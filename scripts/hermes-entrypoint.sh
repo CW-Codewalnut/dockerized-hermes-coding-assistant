@@ -25,6 +25,8 @@ set -euo pipefail
 TEMPLATE_DATA="/opt/hermes-assistant/templates/assistant"
 RULES_SRC="/opt/data/coding-agents/AGENTS.md"
 CONFIG_DIR="${ASSISTANT_CONFIG_DIR:-/run/hermes-assistant/config}"
+SECRETS_DIR="${ASSISTANT_SECRETS_DIR:-/run/hermes-assistant/secrets}"
+S6_ENV_DIR="/run/s6/container_environment"
 
 mkdir -p /opt/data /opt/data/coding-agents /workbench
 
@@ -93,6 +95,60 @@ runtime_env() {
 escape_template_value() {
   printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
 }
+
+read_profile_file() {
+  local dir="$1"
+  local key="$2"
+  local path="$dir/$key"
+  local value=""
+  [[ -f "$path" ]] || return 1
+  IFS= read -r value <"$path" || value=""
+  printf '%s' "$value"
+}
+
+write_s6_env() {
+  local env_name="$1"
+  local value="$2"
+  [[ -d "$S6_ENV_DIR" ]] || return 0
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value" >"$S6_ENV_DIR/$env_name"
+  else
+    rm -f "$S6_ENV_DIR/$env_name" 2>/dev/null || true
+  fi
+}
+
+publish_profile_env_to_s6() {
+  local value
+
+  # Hermes gateway runs under s6 supervision in current container images.
+  # Values exported only by hermes-assistant-run do not reach that child, so
+  # promote the mounted setup profile into s6's container environment.
+  value="$(read_profile_file "$CONFIG_DIR" assistant_name 2>/dev/null || true)"
+  write_s6_env ASSISTANT_NAME "$value"
+  value="$(read_profile_file "$CONFIG_DIR" assistant_slug 2>/dev/null || true)"
+  write_s6_env ASSISTANT_SLUG "${value:-hermes-assistant}"
+  value="$(read_profile_file "$CONFIG_DIR" user_name 2>/dev/null || true)"
+  write_s6_env USER_NAME "$value"
+  value="$(read_profile_file "$CONFIG_DIR" git_user_name 2>/dev/null || true)"
+  write_s6_env GIT_USER_NAME "$value"
+  value="$(read_profile_file "$CONFIG_DIR" git_user_email 2>/dev/null || true)"
+  write_s6_env GIT_USER_EMAIL "$value"
+  value="$(read_profile_file "$CONFIG_DIR" branch_prefix 2>/dev/null || true)"
+  write_s6_env BRANCH_PREFIX "$value"
+  value="$(read_profile_file "$CONFIG_DIR" api_server_enabled 2>/dev/null || true)"
+  write_s6_env API_SERVER_ENABLED "${value:-false}"
+  value="$(read_profile_file "$CONFIG_DIR" dockerd_storage_driver 2>/dev/null || true)"
+  write_s6_env DOCKERD_STORAGE_DRIVER "${value:-overlay2}"
+
+  value="$(read_profile_file "$SECRETS_DIR" telegram_bot_token 2>/dev/null || true)"
+  write_s6_env TELEGRAM_BOT_TOKEN "$value"
+  value="$(read_profile_file "$SECRETS_DIR" telegram_allowed_users 2>/dev/null || true)"
+  write_s6_env TELEGRAM_ALLOWED_USERS "$value"
+  value="$(read_profile_file "$SECRETS_DIR" api_server_key 2>/dev/null || true)"
+  write_s6_env API_SERVER_KEY "$value"
+}
+
+publish_profile_env_to_s6
 
 # Render operational instructions from the current setup profile on every start.
 if [[ -f "$TEMPLATE_DATA/SOUL.md" ]]; then
