@@ -31,11 +31,11 @@ render_template() {
   local src="$1"
   local dst="$2"
   local assistant_name user_name git_user_name git_user_email branch_prefix
-  assistant_name="$(printf '%s' "${ASSISTANT_NAME:-Hermes Assistant}" | sed -e 's/[\/&|]/\\&/g')"
-  user_name="$(printf '%s' "${USER_NAME:-the user}" | sed -e 's/[\/&|]/\\&/g')"
-  git_user_name="$(printf '%s' "${GIT_USER_NAME:-Your Name}" | sed -e 's/[\/&|]/\\&/g')"
-  git_user_email="$(printf '%s' "${GIT_USER_EMAIL:-you@example.com}" | sed -e 's/[\/&|]/\\&/g')"
-  branch_prefix="$(printf '%s' "${BRANCH_PREFIX:-assistant}" | sed -e 's/[\/&|]/\\&/g')"
+  assistant_name="$(escape_template_value "$(runtime_env ASSISTANT_NAME "Hermes Assistant")")"
+  user_name="$(escape_template_value "$(runtime_env USER_NAME "the user")")"
+  git_user_name="$(escape_template_value "$(runtime_env GIT_USER_NAME "Your Name")")"
+  git_user_email="$(escape_template_value "$(runtime_env GIT_USER_EMAIL "you@example.com")")"
+  branch_prefix="$(escape_template_value "$(runtime_env BRANCH_PREFIX "assistant")")"
   cp "$src" "$dst"
   sed -i \
     -e "s|<ASSISTANT_NAME>|$assistant_name|g" \
@@ -46,35 +46,38 @@ render_template() {
     "$dst"
 }
 
-needs_render() {
-  local dst="$1"
-  [[ ! -f "$dst" ]] && return 0
-  grep -q '<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>' "$dst" && return 0
-  return 1
+runtime_env() {
+  local key="$1"
+  local fallback="$2"
+  local value=""
+  value="${!key:-}"
+  if [[ -z "$value" && -f "/run/s6/container_environment/$key" ]]; then
+    value="$(tr -d '\000' < "/run/s6/container_environment/$key")"
+  fi
+  printf '%s' "${value:-$fallback}"
 }
 
-if needs_render /opt/data/SOUL.md && [[ -f "$TEMPLATE_DATA/SOUL.md" ]]; then
+escape_template_value() {
+  printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
+}
+
+# Render operational instructions from the current environment on every start
+# so .env identity changes are reflected after container recreation.
+if [[ -f "$TEMPLATE_DATA/SOUL.md" ]]; then
   render_template "$TEMPLATE_DATA/SOUL.md" /opt/data/SOUL.md
 fi
 
-if needs_render /opt/data/AGENTS.md && [[ -f "$TEMPLATE_DATA/AGENTS.md" ]]; then
+if [[ -f "$TEMPLATE_DATA/AGENTS.md" ]]; then
   render_template "$TEMPLATE_DATA/AGENTS.md" /opt/data/AGENTS.md
 fi
 
-if needs_render "$RULES_SRC" && [[ -f "$TEMPLATE_DATA/coding-agents/AGENTS.md" ]]; then
+if [[ -f "$TEMPLATE_DATA/coding-agents/AGENTS.md" ]]; then
   render_template "$TEMPLATE_DATA/coding-agents/AGENTS.md" "$RULES_SRC"
 fi
 
 if [[ ! -f /opt/data/config.yaml ]]; then
   cat > /opt/data/config.yaml <<'EOF'
-model:
-  provider: opencode-go
-  default: deepseek-v4-pro
-  base_url: https://opencode.ai/zen/go/v1
-  api_mode: chat_completions
-
 agent:
-  reasoning_effort: high
   max_turns: 150
   gateway_timeout: 7200
   gateway_timeout_warning: 3600

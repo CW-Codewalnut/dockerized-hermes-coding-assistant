@@ -62,6 +62,11 @@ run_required "runtime instructions rendered" assistant_exec sh -lc '
   set -eu
   ! grep -R "<ASSISTANT_NAME>\|<USER_NAME>\|<GIT_USER_NAME>\|<GIT_USER_EMAIL>\|<BRANCH_PREFIX>" \
     /opt/data/SOUL.md /opt/data/AGENTS.md /opt/data/coding-agents/AGENTS.md >/dev/null
+  test -n "${ASSISTANT_NAME:-}"
+  test -n "${USER_NAME:-}"
+  grep -F "# ${ASSISTANT_NAME}" /opt/data/SOUL.md >/dev/null
+  grep -F "The primary operator is **${USER_NAME}**." /opt/data/AGENTS.md >/dev/null
+  grep -F "The primary user is **${USER_NAME}**." /opt/data/coding-agents/AGENTS.md >/dev/null
 '
 
 section "Telegram"
