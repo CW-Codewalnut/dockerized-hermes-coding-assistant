@@ -12,7 +12,7 @@ Most assistant setups are either too thin to be useful for real engineering work
 - every repo checkout, agent auth file, memory, and Docker layer lives in named volumes;
 - the assistant can use Docker from inside Docker without host path mismatches;
 - coding work is isolated in fresh git worktrees by default;
-- Codex, OpenCode, and Cursor can all be used as local sub-agents;
+- Codex is the default local coding sub-agent; OpenCode and Cursor are available when explicitly requested;
 - setup finishes with smoke tests instead of hoping auth and tools work.
 
 The goal is a portable personal development machine for AI coding workflows: reproducible enough to run on a laptop or VPS, powerful enough to build and test serious repos, and explicit enough about attribution and branch safety to be trusted with public-facing work.
@@ -37,9 +37,9 @@ This is intentionally not a minimal production container. It is a trusted develo
 - **Docker-in-Docker over host socket:** avoids bind-mount path mismatches when agents run repo-local Docker commands from `/workbench`.
 - **Worktrees by default:** canonical clones stay clean; each coding task gets `/workbench/<owner>/<repo>-worktrees/<task-slug>`.
 - **Protected branches stay protected:** no commits directly on `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
-- **Delegation stays faithful:** when the user explicitly chooses Codex, OpenCode, or Cursor, Hermes passes the request through with only typo/grammar cleanup and minimal routing context.
+- **Delegation stays faithful:** Hermes shows the exact sub-agent prompt before delegation, passes the user's request through with only typo/grammar cleanup and minimal routing context, and defaults to Codex unless the user explicitly chooses OpenCode or Cursor.
 - **Cursor stays repo-scoped:** Cursor runs from the task worktree, never from all of `/workbench`.
-- **High-reasoning defaults:** Hermes uses DeepSeek V4 Pro high; Codex uses `xhigh`; OpenCode uses `max`.
+- **High-reasoning coding defaults:** Hermes brain model setup is handled interactively during setup; default Codex delegation uses `gpt-5.5` with `xhigh`, and OpenCode uses `max` when selected.
 - **Transparency by default:** public-facing text gets the configured Hermes attribution footer unless the user explicitly opts out.
 
 ## Requirements
@@ -124,12 +124,13 @@ http://localhost:<DASHBOARD_PORT>
 
 ## Model Defaults
 
-| Runtime            | Default                                                |
-| ------------------ | ------------------------------------------------------ |
-| Hermes brain       | `opencode-go/deepseek-v4-pro`, reasoning effort `high` |
-| Codex sub-agent    | `gpt-5.5`, reasoning effort `xhigh`                    |
-| OpenCode sub-agent | `opencode-go/deepseek-v4-pro`, variant `max`           |
-| Cursor sub-agent   | `composer-2.5`                                         |
+| Runtime            | Default                                            |
+| ------------------ | -------------------------------------------------- |
+| Hermes brain       | Configured interactively by `hermes setup model`.  |
+| Default sub-agent  | Codex CLI with `gpt-5.5`, reasoning effort `xhigh` |
+| Codex sub-agent    | `gpt-5.5`, reasoning effort `xhigh`                |
+| OpenCode sub-agent | `opencode-go/deepseek-v4-pro`, variant `max`       |
+| Cursor sub-agent   | `composer-2.5`                                     |
 
 ## Docker And State
 

@@ -29,14 +29,14 @@ Keep coding projects under `/workbench`, keep canonical clones as remote-trackin
 - For every coding task that needs repo files, create a fresh git worktree under `/workbench/<owner>/<repo>-worktrees/<short-task-slug>/` with a fresh task branch.
 - Reuse an existing worktree or branch only when the user explicitly asks to reuse it.
 - Clone only when the repo is missing locally, then fetch before starting work so the local checkout knows about current remote state.
-- Never commit directly on protected branches such as `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release`. If the user explicitly asks you to commit on one of those branches, confirm once more before doing it.
-- Never write outside `/workbench/` unless updating assistant-owned state under `/opt/data/`.
+- Never commit directly on commonly protected branches such as `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, `release` or `rel/`. If the user explicitly asks you to commit on one of those branches, confirm once more before doing it.
 
 ## Coding workflow
 
 When the user asks you to change code, follow this workflow:
 
 1. Identify the repo. If the owner is unclear, use `gh search repos <name> --owner @me` or `gh repo list --limit 50`. Ask if it is still ambiguous.
+
 2. Reuse or create the canonical local checkout:
 
    ```bash
@@ -81,7 +81,7 @@ When the user asks you to change code, follow this workflow:
    - unclear requirements;
    - anything where you need to inspect call flow, understand architecture, or choose between alternatives.
 
-   If the user named a sub-agent, use that one. If not, ask one focused question: `Use Codex, OpenCode, or Cursor for this?`
+   If the user named a sub-agent, use that one. If not, use Codex by default with `gpt-5.5` and reasoning effort `xhigh`; do not ask which coding agent to use. Switch to OpenCode or Cursor only when the user explicitly requests that agent.
 
 5. Delegation prompt contract:
 
@@ -91,9 +91,9 @@ When the user asks you to change code, follow this workflow:
    - add only minimal routing context such as `Work only in <task-worktree-path>` and `Do not commit, push, or open a PR unless explicitly asked`;
    - do not add architecture guesses, solution sketches, implementation details, acceptance criteria, test plans, or extra requirements the user did not provide.
 
-   If the user supplied their own implementation details, pass those through. If the user attached images or other files, pass them as attachments or exact file paths using the target CLI's native mechanism. Do not describe, summarize, or infer from images before delegation; let the coding sub-agent inspect the attached image directly.
+   Before invoking a coding sub-agent, show the user the full prompt exactly as it will be sent to the agent. Do not hide it behind a summary or partial preview.
 
-   If Cursor is explicitly requested with images, provide the image paths in the prompt because Cursor's documented headless flags do not currently include a dedicated image-attachment flag. For image-heavy tasks where no agent is specified, prefer Codex or OpenCode because they expose attachment flags.
+   If the user supplied their own implementation details, pass those through. If the user attached images, include an `Attachments from user:` section in the prompt with each image's absolute path. Do not use CLI image/file attachment flags for images. Do not describe, summarize, or infer from images before delegation; let the coding sub-agent inspect the attached image directly. If the user attached non-image files, pass exact absolute file paths in the prompt.
 
 6. Coding sub-agent defaults:
 
@@ -139,20 +139,20 @@ When the user asks you to change code, follow this workflow:
      --trust \
      --sandbox disabled \
      --output-format text \
-     "Work only in /workbench/<owner>/<repo>-worktrees/<short-task-slug>. Do not commit, push, or open a PR unless explicitly asked. <task prompt>"
+     "<task prompt>"
    ```
 
-   For Codex image tasks, repeat `--image /path/to/image.png` or pass comma-separated image paths. Codex global flags belong after the `exec` subcommand. For machine parsing, add `--json` and/or `--output-last-message`.
-   For OpenCode image or context-file tasks, repeat `--file /path/to/file` and keep `--dir` pointed at the task worktree. Use `--format json` when the caller needs raw event output.
-   For Cursor, official headless docs center on running `-p` / `--print` from the target project directory, with `--force` for direct edits, `--model`, `--output-format`, `--trust`, `--sandbox`, and optional `--workspace`. Always `cd` to the task worktree before invoking Cursor so project context and automatic project rules are scoped to the target worktree, not all of `/workbench`. This image symlinks `cursor-agent` as `agent`; if using `--workspace`, pass the task worktree path, never `/workbench`.
-   Codex reasoning effort is configured in `~/.codex/config.toml` and can also be overridden with `--config 'model_reasoning_effort="xhigh"'`; do not invent a dedicated reasoning flag if the installed version does not expose one.
-   OpenCode's durable config stores the default model; the default reasoning budget is applied at invocation time with `--variant max`.
-   Cursor reads project rules from the chosen workspace, including `.cursor/rules`, project-root `AGENTS.md`, and project-root `CLAUDE.md`; subdirectories can also have scoped `.cursor/rules`. Do not pass `/opt/data/coding-agents/AGENTS.md` in the Cursor prompt and do not copy or symlink shared Hermes rules into user repos. Hermes is responsible for routing policy; Cursor should receive the user's task plus only minimal guardrails such as the repo path and no commit/push/PR unless asked.
-   Cursor's dedicated ACP server mode is available as `agent acp` for custom Agent Client Protocol clients. Do not use ACP for normal Hermes delegation; the terminal/process tools should run local headless `agent -p` commands.
+   - For Codex and OpenCode image tasks, do not pass image attachment flags; include absolute image paths in the prompt under `Attachments from user:`. Codex global flags belong after the `exec` subcommand. For machine parsing, add `--json` and/or `--output-last-message`.
+   - For OpenCode non-image context-file tasks, repeat `--file /path/to/file` only when the target file is useful as CLI context, and keep `--dir` pointed at the task worktree. Use `--format json` when the caller needs raw event output.
+   - For Cursor, official headless docs center on running `-p` / `--print` from the target project directory, with `--force` for direct edits, `--model`, `--output-format`, `--trust`, `--sandbox`, and optional `--workspace`. Always `cd` to the task worktree before invoking Cursor so project context and automatic project rules are scoped to the target worktree, not all of `/workbench`. This image symlinks `cursor-agent` as `agent`; if using `--workspace`, pass the task worktree path, never `/workbench`.
+   - Codex reasoning effort is configured in `~/.codex/config.toml` and can also be overridden with `--config 'model_reasoning_effort="xhigh"'`; do not invent a dedicated reasoning flag if the installed version does not expose one.
+   - OpenCode's durable config stores the default model; the default reasoning budget is applied at invocation time with `--variant max`.
+   - Cursor reads project rules from the chosen workspace, including `.cursor/rules`, project-root `AGENTS.md`, and project-root `CLAUDE.md`; subdirectories can also have scoped `.cursor/rules`. Do not pass `/opt/data/coding-agents/AGENTS.md` in the Cursor prompt and do not copy or symlink shared Hermes rules into user repos. Hermes is responsible for routing policy; Cursor should receive the user's task plus only minimal guardrails such as the repo path and no commit/push/PR unless asked.
+   - Cursor's dedicated ACP server mode is available as `agent acp` for custom Agent Client Protocol clients. Do not use ACP for normal Hermes delegation; the terminal/process tools should run local headless `agent -p` commands.
 
-7. Long-running coding tasks:
+7. Coding-agent execution:
 
-   Coding-agent runs often take longer than normal shell commands. For anything likely to run more than a few minutes, start it as a background terminal process instead of a short foreground command:
+   Always start delegated Codex, OpenCode, and Cursor coding tasks as background terminal processes, even for small tasks:
 
    ```text
    terminal(command="<codex, opencode, or agent command>", background=true, notify_on_complete=true, pty=true)
@@ -165,15 +165,7 @@ When the user asks you to change code, follow this workflow:
 
    The default Hermes config gives terminal commands and gateway inactivity a two-hour budget. For tasks that may exceed that, tell the user before starting and continue with background polling instead of launching duplicate coding-agent runs.
 
-8. Review the sub-agent result instead of forwarding it blindly. Check `git diff`, run focused tests when available, and verify the change is scoped to the request.
-
-9. Show the diff and stop:
-
-   ```bash
-   git -C /workbench/<owner>/<repo>-worktrees/<short-task-slug> diff origin/<base-branch>
-   ```
-
-10. Commit, push, or open a PR only when the user explicitly asks. Before committing, verify the current branch is not a protected branch. If it is protected, stop and ask for explicit confirmation even if the user already asked for a commit.
+8. Commit, push, or open a PR only when the user explicitly asks. Before committing, verify the current branch is not a protected branch. If it is protected, stop and ask for explicit confirmation even if the user already asked for a commit. Always use conventional commits.
 
 ## Coding best practices
 
@@ -217,7 +209,7 @@ When the user asks you to change code, follow this workflow:
 | Patching      | `diff`, `patch`                                          |
 | Archives      | `unzip`, `zip`, `tar`                                    |
 
-Prefer existing tools over ad hoc scripts. Use `rg` for text search and `jq` for JSON.
+Use `rg` for text search and `jq` for JSON.
 
 ## Google Workspace
 
@@ -226,7 +218,8 @@ Prefer existing tools over ad hoc scripts. Use `rg` for text search and `jq` for
 - When using `gws` directly, set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json` or invoke it through the skill's `scripts/gws_bridge.py`.
 - Google OAuth state lives under `/opt/data/google_client_secret.json` and `/opt/data/google_token.json`. Never paste these files, OAuth redirect URLs containing `code=`, or token contents into chat.
 - Check auth before first use with `/opt/hermes/.venv/bin/python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py --check`. If unauthenticated, guide the user through the README Google Workspace setup flow.
-- Before sending email, creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets, show the exact action and get user confirmation.
+- Before sending email, show the full recipient list (`To`, `Cc`, and `Bcc`), subject, and complete body exactly as it will be sent, including any attribution footer. Get explicit user confirmation before sending.
+- Before creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets, show the exact action and get user confirmation.
 
 ## MCP servers
 
