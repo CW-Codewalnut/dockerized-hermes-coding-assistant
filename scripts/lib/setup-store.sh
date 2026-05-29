@@ -136,6 +136,8 @@ load_compose_env() {
   export ROCKY_ASSISTANT_SLUG="${assistant_slug:-hermes-assistant}"
   export ROCKY_DASHBOARD_PORT="${dashboard_port:-9119}"
   export ROCKY_API_PORT="${api_port:-8642}"
+  export ROCKY_CONFIG_DIR="$ASSISTANT_CONFIG_DIR"
+  export ROCKY_SECRETS_DIR="$ASSISTANT_SECRETS_DIR"
 }
 
 compose() {

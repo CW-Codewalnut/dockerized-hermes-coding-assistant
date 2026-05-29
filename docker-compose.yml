@@ -23,8 +23,8 @@ services:
       - "127.0.0.1:${ROCKY_DASHBOARD_PORT:-9119}:9119" # Web dashboard
     volumes:
       # Setup profile: created by scripts/setup.sh and loaded through scripts/compose.sh.
-      - ./.assistant/config:/run/hermes-assistant/config:ro
-      - ./.assistant/secrets:/run/hermes-assistant/secrets:ro
+      - ${ROCKY_CONFIG_DIR:?run scripts/setup.sh first}:/run/hermes-assistant/config:ro
+      - ${ROCKY_SECRETS_DIR:?run scripts/setup.sh first}:/run/hermes-assistant/secrets:ro
       # Runtime state: named Docker volumes, not host bind mounts. Export these
       # volumes to migrate the assistant to another machine.
       - hermes_data:/opt/data
