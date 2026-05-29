@@ -1,36 +1,61 @@
 # Dockerized Hermes Coding Assistant
 
-Run a personal [Hermes Agent](https://hermes-agent.nousresearch.com/docs/) as a Telegram-accessible coding assistant.
+Run a Telegram-accessible [Hermes Agent](https://hermes-agent.nousresearch.com/docs/) that behaves like a real coding workstation, not a toy chatbot.
 
-This repository packages Hermes with local coding sub-agents, persistent Docker state, GitHub access, and optional Google Workspace access so someone can clone the repo, fill a `.env`, run one setup script, and get a usable assistant.
+This repo packages Hermes with Codex CLI, OpenCode CLI, Cursor Agent CLI, GitHub CLI, optional Google Workspace tooling, a broad Ubuntu development toolbox, and an in-container Docker daemon. It is built for agents that need to clone repos, run tests, build containers, delegate coding tasks, inspect results, and keep working across restarts.
+
+## Why This Exists
+
+Most assistant setups are either too thin to be useful for real engineering work or too tied to one local machine. This repo is an opinionated middle ground:
+
+- one command gets a persistent Telegram-accessible coding assistant running;
+- every repo checkout, agent auth file, memory, and Docker layer lives in named volumes;
+- the assistant can use Docker from inside Docker without host path mismatches;
+- coding work is isolated in fresh git worktrees by default;
+- Codex, OpenCode, and Cursor can all be used as local sub-agents;
+- setup finishes with smoke tests instead of hoping auth and tools work.
+
+The goal is a portable personal development machine for AI coding workflows: reproducible enough to run on a laptop or VPS, powerful enough to build and test serious repos, and explicit enough about attribution and branch safety to be trusted with public-facing work.
 
 ## What You Get
 
-- Hermes Agent running from the official Nous Research image.
-- Telegram as the chat surface.
-- Local coding agents inside the same Docker container:
-  - Codex CLI
-  - OpenCode CLI
-  - Cursor Agent CLI
-- GitHub CLI wired through `GH_TOKEN` for cloning, pushing, PRs, issues, and gists.
-- Optional Google Workspace support through Hermes' bundled `google-workspace` skill and `gws`.
-- Persistent state in Docker named volumes, not host folders.
-- Long-lived project checkouts under `/workbench/<owner>/<repo>`.
-- Assistant-specific Docker names from `ASSISTANT_SLUG`, so multiple assistants can run on one machine.
+- Hermes Agent running from the official Nous image.
+- Telegram as the chat surface, with localhost dashboard/API ports.
+- Codex CLI, OpenCode CLI, and Cursor Agent CLI installed together.
+- GitHub CLI wired through `GH_TOKEN` for repos, PRs, issues, and gists.
+- Full dev toolbox: Node, Bun, Python, uv, Go, Rust, compilers, debuggers, `rg`, `fd`, `jq`, `yq`, `shellcheck`, `shfmt`, and more.
+- Privileged Docker-in-Docker with Docker CLI, Compose, and Buildx.
+- Persistent `/workbench` for canonical clones and per-task worktrees.
+- Optional Google Workspace support for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
+- Public attribution footer rules for commits, PRs, issue comments, reviews, and other external text.
+
+## Opinionated Defaults
+
+This is intentionally not a minimal production container. It is a trusted development environment for coding agents.
+
+- **Power over sandbox minimalism:** privileged container, passwordless `sudo`, broad tools, and a real inner Docker daemon.
+- **Docker-in-Docker over host socket:** avoids bind-mount path mismatches when agents run repo-local Docker commands from `/workbench`.
+- **Worktrees by default:** canonical clones stay clean; each coding task gets `/workbench/<owner>/<repo>-worktrees/<task-slug>`.
+- **Protected branches stay protected:** no commits directly on `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
+- **Delegation stays faithful:** when the user explicitly chooses Codex, OpenCode, or Cursor, Hermes passes the request through with only typo/grammar cleanup and minimal routing context.
+- **Cursor stays repo-scoped:** Cursor runs from the task worktree, never from all of `/workbench`.
+- **High-reasoning defaults:** Hermes uses DeepSeek V4 Pro high; Codex uses `xhigh`; OpenCode uses `max`.
+- **Transparency by default:** public-facing text gets the configured Hermes attribution footer unless the user explicitly opts out.
 
 ## Requirements
 
 - Docker with the Compose plugin.
+- Privileged containers enabled. This is required for the in-container Docker daemon.
 - Git.
-- A Telegram bot token from `@BotFather`.
-- A GitHub classic PAT with the scopes listed below.
-- At least 4 GB Docker memory. More is better for large repos.
-- Optional: Cursor API key for headless Cursor CLI runs.
-- Optional: Google OAuth Desktop client JSON for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
+- Telegram bot token from `@BotFather`.
+- GitHub classic PAT with `repo` and `gist`; add `read:org` for org repos.
+- 8 GB Docker/host memory minimum; 16 GB or more is better.
+- Optional: Cursor API key for headless Cursor runs.
+- Optional: Google OAuth Desktop client JSON for Gmail, Calendar, Drive, Docs, Sheets, or Contacts.
 
-The Compose file binds dashboard and API ports to `127.0.0.1` only. Telegram access works through outbound polling/web requests, so a VPS does not need public inbound ports for normal chat use.
+Dashboard and API ports bind to `127.0.0.1`. Telegram uses outbound polling, so normal chat use does not require public inbound ports.
 
-## Quick Start
+## Setup
 
 ```bash
 git clone <this-repo-url> hermes-assistant
@@ -43,66 +68,22 @@ vi .env
 scripts/setup.sh
 ```
 
-The setup script will:
+`scripts/setup.sh` prompts for missing values, builds the container, starts Hermes, runs optional auth flows, configures Google Workspace if requested, and finishes with smoke tests.
 
-- prompt for missing `.env` values;
-- build and start the Docker container;
-- render assistant instructions from `templates/assistant/`;
-- run Hermes model setup if you choose;
-- run Codex and OpenCode login flows if you choose;
-- configure Cursor through `CURSOR_API_KEY` or `agent login`;
-- optionally configure Google Workspace OAuth;
-- verify Telegram, GitHub, coding-agent state, Google Workspace, and Hermes status.
+Important `.env` values:
 
-If you skip an optional login during setup, rerun `scripts/setup.sh` later.
+| Key                                                | Purpose                                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `ASSISTANT_NAME`, `ASSISTANT_SLUG`, `USER_NAME`    | Assistant identity and Docker naming.                                          |
+| `GIT_USER_NAME`, `GIT_USER_EMAIL`, `BRANCH_PREFIX` | Git author identity and branch prefix for workbench repos.                     |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`     | Telegram access.                                                               |
+| `GH_TOKEN`                                         | GitHub auth for `gh`, git push, PRs, issues, and gists.                        |
+| `CURSOR_API_KEY`                                   | Optional Cursor Agent auth for headless `agent -p`.                            |
+| `DOCKERD_STORAGE_DRIVER`                           | Inner Docker storage driver. Keep `overlay2` unless setup tells you otherwise. |
 
-## Required `.env` Values
+Do not commit `.env` or exported backups.
 
-Start from `.env.example`. These are the fields most people need to understand:
-
-| Key                               | Purpose                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `ASSISTANT_NAME`                  | Human-readable assistant name shown in runtime instructions.              |
-| `ASSISTANT_SLUG`                  | Docker-safe name for container, image, network, and volumes.              |
-| `USER_NAME`                       | Primary user or team name.                                                |
-| `GIT_USER_NAME`, `GIT_USER_EMAIL` | Commit author identity inside workbench repos.                            |
-| `BRANCH_PREFIX`                   | Prefix for assistant-created task branches.                               |
-| `DASHBOARD_PORT`, `API_PORT`      | Localhost ports for the dashboard and OpenAI-compatible API.              |
-| `DOCKER_MEMORY`, `DOCKER_CPUS`    | Docker resource limits.                                                   |
-| `TELEGRAM_BOT_TOKEN`              | Bot token from `@BotFather`.                                              |
-| `TELEGRAM_ALLOWED_USERS`          | Comma-separated Telegram numeric user IDs allowed to talk to Hermes.      |
-| `GH_TOKEN`                        | GitHub classic PAT used by `gh` and git credential helper.                |
-| `CURSOR_API_KEY`                  | Optional Cursor user API key for reliable headless `agent -p` automation. |
-
-Recommended GitHub PAT scopes:
-
-- `repo`
-- `gist`
-- `read:org` if you use org repos
-
-Leave these disabled unless you know you need them:
-
-- `delete_repo`
-- `admin:*`
-- `workflow`
-- broad account/package/project/notification scopes
-
-For Cursor, prefer `CURSOR_API_KEY` on VPS or Docker installs. It authenticates the Cursor CLI as your Cursor account and avoids browser handoff inside the container. Generate one from [Cursor user API keys](https://cursor.com/dashboard/api?section=user-keys#user-api-keys). Browser login with `agent login` is still available for interactive local setups.
-
-## Model Defaults
-
-| Runtime            | Default                                                |
-| ------------------ | ------------------------------------------------------ |
-| Hermes brain       | `opencode-go/deepseek-v4-pro`, reasoning effort `high` |
-| Codex sub-agent    | `gpt-5.5`, reasoning effort `high`                     |
-| OpenCode sub-agent | `opencode-go/deepseek-v4-pro`, variant `high`          |
-| Cursor sub-agent   | `composer-2.5`                                         |
-
-Cursor CLI exposes `--model`, but the installed CLI does not expose a separate reasoning-effort flag. The templates tell Hermes not to invent one.
-
-## Daily Operations
-
-Use the Compose service name `assistant`; the actual container name is `${ASSISTANT_SLUG}`.
+## Operations
 
 ```bash
 docker compose up -d
@@ -111,7 +92,7 @@ docker compose restart assistant
 docker compose down
 ```
 
-Open an interactive shell or Hermes CLI:
+Open a shell or Hermes CLI:
 
 ```bash
 docker compose exec -u hermes -it assistant sh
@@ -127,61 +108,53 @@ docker compose exec -u hermes -it assistant opencode auth login
 docker compose exec -u hermes -it assistant agent login
 ```
 
+Run smoke tests after setup or after changing auth:
+
+```bash
+scripts/smoke-test.sh
+```
+
+Required smoke checks cover Telegram, GitHub, Hermes, and the inner Docker daemon. Codex, OpenCode, Cursor, and Google Workspace report optional warnings when auth is missing or invalid.
+
 Dashboard:
 
 ```text
 http://localhost:<DASHBOARD_PORT>
 ```
 
-## Backups And Migration
+## Model Defaults
 
-Create an export:
+| Runtime            | Default                                                |
+| ------------------ | ------------------------------------------------------ |
+| Hermes brain       | `opencode-go/deepseek-v4-pro`, reasoning effort `high` |
+| Codex sub-agent    | `gpt-5.5`, reasoning effort `xhigh`                    |
+| OpenCode sub-agent | `opencode-go/deepseek-v4-pro`, variant `max`           |
+| Cursor sub-agent   | `composer-2.5`                                         |
 
-```bash
-scripts/backup-state.sh
-```
+## Docker And State
 
-The backup includes:
-
-- `.env`
-- the Hermes data volume
-- the workbench volume
-
-It contains secrets and repository checkouts. Store it carefully.
-
-Restore on another host:
+This is intentionally a powerful development container, not a hardened production service. It runs privileged, gives the `hermes` user passwordless `sudo`, and starts Docker-in-Docker so repo commands like this work normally:
 
 ```bash
-git clone <this-repo-url> hermes-assistant
-cd hermes-assistant
-scripts/restore-state.sh <backup.tar.gz>
-scripts/setup.sh
+docker run --rm -v "$PWD":/app -w /app node:lts npm test
 ```
 
-If you restore to an untrusted or shared host, rotate `GH_TOKEN`, Telegram token, Cursor API key, Google OAuth credentials, and provider auth.
+Runtime state is stored in named Docker volumes:
+
+| Volume                        | Contains                                                        |
+| ----------------------------- | --------------------------------------------------------------- |
+| `${ASSISTANT_SLUG}_data`      | Hermes config, memories, logs, instructions, and auth.          |
+| `${ASSISTANT_SLUG}_workbench` | Canonical repo checkouts and task worktrees under `/workbench`. |
+| `${ASSISTANT_SLUG}_docker`    | Inner Docker images, containers, volumes, and build cache.      |
 
 ## Google Workspace
 
-Google Workspace is optional. Enable it if you want Hermes to use Gmail, Calendar, Drive, Docs, Sheets, or Contacts.
+Google Workspace is optional. During setup, answer yes at the Google prompt and provide an OAuth 2.0 Desktop client JSON. The setup stores:
 
-During `scripts/setup.sh`, answer yes at the Google Workspace prompt and provide an OAuth 2.0 Desktop client JSON. The script stores credentials in the data volume:
+- `/opt/data/google_client_secret.json`
+- `/opt/data/google_token.json`
 
-| Path                                  | Purpose                                  |
-| ------------------------------------- | ---------------------------------------- |
-| `/opt/data/google_client_secret.json` | OAuth Desktop client from Google Cloud.  |
-| `/opt/data/google_token.json`         | Refreshable user token created by setup. |
-
-Create the OAuth client:
-
-1. Open <https://console.cloud.google.com/projectselector2/home/dashboard>.
-2. Create or select a project.
-3. Enable the APIs you need: Gmail, Calendar, Drive, Sheets, Docs, People.
-4. Open <https://console.cloud.google.com/apis/credentials>.
-5. Create an `OAuth client ID` for a `Desktop app`.
-6. If the app is in testing mode, add your account at <https://console.cloud.google.com/auth/audience>.
-7. Download the JSON.
-
-For VPS automation:
+For non-interactive transfer:
 
 ```bash
 GOOGLE_CLIENT_SECRET_B64="$(base64 -w0 /path/to/client_secret.json)" scripts/setup.sh
@@ -193,122 +166,69 @@ On macOS:
 GOOGLE_CLIENT_SECRET_B64="$(base64 -i /path/to/client_secret.json | tr -d '\n')" scripts/setup.sh
 ```
 
-Verify later:
+Treat Google client secrets, Google tokens, OAuth callback URLs containing `code=`, `.env`, and backups as secrets.
 
-```bash
-docker compose exec -u hermes assistant \
-  sh -lc '/opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check-live'
+## Public Attribution
+
+When the assistant writes public-facing content on behalf of the user, it appends this footer unless explicitly asked not to:
+
+```text
+---
+Authored by <ASSISTANT_NAME> (powered by Hermes Agent).
 ```
 
-Treat Google client secrets, Google tokens, OAuth redirect URLs containing `code=`, and exported backups as secrets.
+This applies to commit bodies, PR descriptions, PR reviews, issue comments, public gist text, release notes, and similar external text.
 
-## Coding Workflow
+## Backup, Restore, Wipe
 
-Hermes keeps long-lived checkouts in `/workbench/<owner>/<repo>` inside the `${ASSISTANT_SLUG}_workbench` volume. It fetches and reuses those repos across tasks.
-
-Default assistant behavior:
-
-| User asks                   | Assistant does                                                          |
-| --------------------------- | ----------------------------------------------------------------------- |
-| Explain code                | Uses GitHub search first; clones only if needed.                        |
-| Read or create gists        | Uses `gh gist`; creates secret gists unless public is requested.        |
-| Trivial mechanical edit     | Handles it directly.                                                    |
-| Reasoning-heavy coding task | Delegates to Codex, OpenCode, or Cursor; asks which one if unspecified. |
-| Long coding-agent run       | Starts it in the background and monitors it.                            |
-| Push, commit, or open PR    | Only after explicit user approval.                                      |
-
-The assistant delegates by running local CLI processes inside the same container. The templates use these invocation shapes:
+Create a backup:
 
 ```bash
-codex exec \
-  --model gpt-5.5 \
-  --config 'model_reasoning_effort="high"' \
-  --dangerously-bypass-approvals-and-sandbox \
-  "<task prompt>"
+scripts/backup-state.sh
 ```
+
+Restore:
 
 ```bash
-opencode run \
-  --model opencode-go/deepseek-v4-pro \
-  --variant high \
-  --dir /workbench/<owner>/<repo> \
-  --dangerously-skip-permissions \
-  "<task prompt>"
+scripts/restore-state.sh <backup.tar.gz>
+scripts/setup.sh
 ```
 
-Cursor delegation uses the local Cursor Agent CLI, not Cursor Background Agents:
+Backups include `.env`, Hermes state, repo checkouts, and inner Docker state. They contain secrets and can be large.
 
-```bash
-agent -p \
-  --workspace /workbench \
-  --model composer-2.5 \
-  --force \
-  --trust \
-  --sandbox disabled \
-  --output-format text \
-  "Work only in /workbench/<owner>/<repo>. <task prompt>"
-```
-
-Codex and OpenCode get the shared rules through their global config directories. Cursor reads `AGENTS.md` from the workspace, so the entrypoint also symlinks the shared coding-agent rules to `/workbench/AGENTS.md`. Repo-local nested `AGENTS.md` files can add more specific Cursor instructions.
-
-Cursor ACP mode is available as `agent acp` for custom Agent Client Protocol clients, but normal Telegram delegation uses local headless `agent -p`.
-
-## Repository Layout
-
-| Path                                          | Purpose                                       |
-| --------------------------------------------- | --------------------------------------------- |
-| `Dockerfile`                                  | Builds Hermes plus coding-agent tooling.      |
-| `docker-compose.yml`                          | Runs the assistant service and named volumes. |
-| `.env.example`                                | Environment template. Copy to `.env`.         |
-| `templates/assistant/SOUL.md`                 | Assistant persona template.                   |
-| `templates/assistant/AGENTS.md`               | Main assistant operating instructions.        |
-| `templates/assistant/coding-agents/AGENTS.md` | Shared sub-agent instructions.                |
-| `scripts/setup.sh`                            | Interactive setup and verification.           |
-| `scripts/backup-state.sh`                     | Exports `.env` plus Docker volumes.           |
-| `scripts/restore-state.sh`                    | Restores exported state on another host.      |
-| `scripts/clean-wipe.sh`                       | Removes this assistant's Docker footprint.    |
-
-Runtime state:
-
-| Storage                                     | Contains                                                              |
-| ------------------------------------------- | --------------------------------------------------------------------- |
-| `${ASSISTANT_SLUG}_data` Docker volume      | Hermes config, memories, sessions, logs, rendered instructions, auth. |
-| `${ASSISTANT_SLUG}_workbench` Docker volume | Persistent project checkouts under `/workbench`.                      |
-| `.env`                                      | Local identity, tokens, ports, Docker limits.                         |
-
-Do not commit `.env` or exported backups.
-
-## Clean Wipe
-
-Use this only when you intentionally want to remove the assistant's Docker footprint.
+Wipe this assistant's Docker footprint:
 
 ```bash
 scripts/clean-wipe.sh
 scripts/clean-wipe.sh -y
 ```
 
-Also prune unused Docker objects across the whole machine:
+Also prune unused Docker objects across the machine:
 
 ```bash
 scripts/clean-wipe.sh -y --prune-system
 ```
 
-Use `--prune-system` carefully. It can delete stopped containers and unused images from unrelated projects.
+Use `--prune-system` carefully; it can remove unrelated stopped containers and unused images.
+
+## Files
+
+| Path                                                                           | Purpose                                |
+| ------------------------------------------------------------------------------ | -------------------------------------- |
+| `Dockerfile`                                                                   | Builds Hermes plus tooling.            |
+| `docker-compose.yml`                                                           | Runs the assistant and volumes.        |
+| `.env.example`                                                                 | Environment template.                  |
+| `templates/assistant/SOUL.md`                                                  | Assistant persona.                     |
+| `templates/assistant/AGENTS.md`                                                | Main assistant operating rules.        |
+| `templates/assistant/coding-agents/AGENTS.md`                                  | Shared Codex/OpenCode sub-agent rules. |
+| `scripts/setup.sh`                                                             | Setup flow.                            |
+| `scripts/smoke-test.sh`                                                        | Post-setup checks.                     |
+| `scripts/backup-state.sh`, `scripts/restore-state.sh`, `scripts/clean-wipe.sh` | State management.                      |
 
 ## Troubleshooting
 
-| Symptom                       | Try                                                                                               |
-| ----------------------------- | ------------------------------------------------------------------------------------------------- |
-| Container exits immediately   | `docker compose logs assistant`                                                                   |
-| Telegram bot does not respond | Check `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USERS`.                                          |
-| GitHub auth fails             | Check `GH_TOKEN`, then recreate with `docker compose up -d`.                                      |
-| Gist access fails             | Regenerate `GH_TOKEN` with the `gist` scope, then recreate with `docker compose up -d`.           |
-| `gws` command missing         | Rebuild with `docker compose up -d --build`.                                                      |
-| Google says not authenticated | Run the Google Workspace setup flow and verify `/opt/data/google_token.json`.                     |
-| Google API returns 403        | Enable the API in Google Cloud Console, or revoke and re-authorize if scopes are missing.         |
-| Codex says not logged in      | `docker compose exec -u hermes -it assistant codex login --device-auth`                           |
-| OpenCode says no provider     | `docker compose exec -u hermes -it assistant opencode auth login`                                 |
-| Cursor says not authenticated | Set `CURSOR_API_KEY` in `.env` and recreate with `docker compose up -d`, or run `agent login`.    |
-| Coding-agent task times out   | Increase `agent.gateway_timeout` and `terminal.timeout` in `/opt/data/config.yaml`, then restart. |
-| Model errors or 401s          | `docker compose exec -u hermes assistant hermes status`, then rerun model setup.                  |
-| Port conflict                 | Change `DASHBOARD_PORT` or `API_PORT` in `.env`.                                                  |
+- Start with `scripts/smoke-test.sh`.
+- For startup failures, run `docker compose logs assistant`.
+- For auth issues, rerun the matching login command from the Operations section.
+- If inner Docker fails, try `DOCKERD_STORAGE_DRIVER=fuse-overlayfs` in `.env`, then rebuild.
+- If ports conflict, change `DASHBOARD_PORT` or `API_PORT` in `.env`.
