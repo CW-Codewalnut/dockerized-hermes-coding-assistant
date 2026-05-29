@@ -94,6 +94,29 @@ You will need:
 EOF
 }
 
+validate_container_profile() {
+  local missing=()
+
+  for key in assistant_name assistant_slug user_name branch_prefix dashboard_port api_port api_server_enabled dockerd_storage_driver; do
+    if ! has_store_value config "$key"; then
+      missing+=("config/$key")
+    fi
+  done
+
+  for key in telegram_bot_token telegram_allowed_users; do
+    if ! has_store_value secret "$key"; then
+      missing+=("secrets/$key")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "Setup profile is incomplete; refusing to start the container." >&2
+    printf 'Missing: %s\n' "${missing[@]}" >&2
+    echo "Run scripts/setup.sh in an interactive terminal to fill these values." >&2
+    exit 1
+  fi
+}
+
 assistant_container_name() {
   local name
   name="$(read_store_value config assistant_slug 2>/dev/null || true)"
@@ -199,14 +222,18 @@ compose_exec() {
 }
 
 inner_docker_ready() {
-  compose_exec 10 -u hermes "$SERVICE" docker info >/dev/null 2>&1
+  compose_exec 4 -u hermes "$SERVICE" docker info >/dev/null 2>&1
 }
 
 wait_for_inner_docker_once() {
+  local attempt
   echo "Waiting for inner Docker daemon ..."
-  for _ in {1..90}; do
+  for attempt in {1..20}; do
     if inner_docker_ready; then
       return 0
+    fi
+    if ((attempt == 1 || attempt % 5 == 0)); then
+      echo "  inner Docker not ready yet (${attempt}/20)"
     fi
     sleep 2
   done
@@ -219,7 +246,7 @@ print_inner_docker_debug() {
   compose logs --tail=160 "$SERVICE" 2>&1 | sed 's/^/    /' || true
   echo
   echo "Inner Docker process/socket state:"
-  compose_exec 10 "$SERVICE" sh -lc '
+  compose_exec 5 "$SERVICE" sh -lc '
     set +e
     ps -ef | grep "[d]ockerd"
     ls -l /var/run/docker.sock /var/lib/docker 2>/dev/null
@@ -610,6 +637,7 @@ EOF
 }
 
 configure_local_profile
+validate_container_profile
 
 if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Start Docker Desktop, then rerun scripts/setup.sh." >&2

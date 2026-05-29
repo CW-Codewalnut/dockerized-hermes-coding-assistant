@@ -15,6 +15,23 @@ read_profile_file() {
   printf '%s\n' "$value"
 }
 
+print_profile_debug() {
+  echo "Setup profile debug:" >&2
+  echo "  config dir: $CONFIG_DIR" >&2
+  if [[ -d "$CONFIG_DIR" ]]; then
+    find "$CONFIG_DIR" -maxdepth 1 -type f -printf '  config/%f\n' 2>/dev/null | sort >&2 || true
+  else
+    echo "  config dir missing" >&2
+  fi
+  echo "  secrets dir: $SECRETS_DIR" >&2
+  if [[ -d "$SECRETS_DIR" ]]; then
+    find "$SECRETS_DIR" -maxdepth 1 -type f -printf '  secrets/%f\n' 2>/dev/null | sort >&2 || true
+  else
+    echo "  secrets dir missing" >&2
+  fi
+  echo "Run scripts/setup.sh on the host to create a complete setup profile." >&2
+}
+
 export_config() {
   local env_name="$1"
   local key="$2"
@@ -25,6 +42,7 @@ export_config() {
   value="${value:-$fallback}"
   if [[ -z "$value" && "$required" == "true" ]]; then
     echo "Missing required setup value: $key" >&2
+    print_profile_debug
     exit 1
   fi
   export "$env_name=$value"
@@ -38,6 +56,7 @@ export_secret() {
   value="$(read_profile_file "$SECRETS_DIR" "$key" 2>/dev/null || true)"
   if [[ -z "$value" && "$required" == "true" ]]; then
     echo "Missing required setup secret: $key" >&2
+    print_profile_debug
     exit 1
   fi
   if [[ -n "$value" ]]; then
