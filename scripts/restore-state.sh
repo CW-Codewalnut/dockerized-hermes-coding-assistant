@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restore assistant Docker volumes from a backup produced by backup-state.sh.
+# Restore assistant state volumes from a backup produced by backup-state.sh.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,26 +40,32 @@ SLUG="${SLUG:-hermes-assistant}"
 
 docker volume create "${SLUG}_data" >/dev/null
 docker volume create "${SLUG}_workbench" >/dev/null
+docker volume create "${SLUG}_docker" >/dev/null
 
 docker run --rm \
   -e BACKUP_FILE="$BACKUP_FILE" \
   -v "${SLUG}_data:/data" \
   -v "${SLUG}_workbench:/workbench" \
+  -v "${SLUG}_docker:/docker" \
   -v "$BACKUP_DIR:/backup:ro" \
   alpine:latest \
   sh -lc '
     set -eu
     test -d /data
     test -d /workbench
+    test -d /docker
     rm -rf /restore
     mkdir -p /restore
     tar -xzf "/backup/$BACKUP_FILE" -C /restore
     test -d /restore/data
     test -d /restore/workbench
+    test -d /restore/docker
     find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     find /workbench -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    find /docker -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     cp -a /restore/data/. /data/
     cp -a /restore/workbench/. /workbench/
+    cp -a /restore/docker/. /docker/
   '
 
-echo "Restored ${SLUG}_data and ${SLUG}_workbench from $BACKUP_PATH"
+echo "Restored ${SLUG}_data, ${SLUG}_workbench, and ${SLUG}_docker from $BACKUP_PATH"

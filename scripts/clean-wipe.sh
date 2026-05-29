@@ -34,10 +34,9 @@ SLUG="${SLUG:-hermes-assistant}"
 
 if [[ "$YES" != true ]]; then
   echo "About to remove assistant runtime for slug '$SLUG':"
-  echo "  - containers: $SLUG, hermes-assistant"
-  echo "  - images: ${SLUG}:local, hermes-assistant:local"
-  echo "  - volumes: ${SLUG}_data, ${SLUG}_workbench and legacy variants"
-  echo "  - legacy host folders: data/, workbench/"
+  echo "  - container: $SLUG"
+  echo "  - image: ${SLUG}:local"
+  echo "  - volumes: ${SLUG}_data, ${SLUG}_workbench, ${SLUG}_docker"
   echo "  - Docker builder cache"
   if [[ "$PRUNE_SYSTEM" == true ]]; then
     echo "  - unused Docker containers/images/networks across the whole machine"
@@ -53,29 +52,24 @@ if [[ "$YES" != true ]]; then
 fi
 
 echo
-echo "[1/6] Compose down ..."
+echo "[1/5] Compose down ..."
 docker compose down --remove-orphans -v 2>&1 | sed 's/^/    /' || true
 
 echo
-echo "[2/6] Removing assistant containers ..."
-docker rm -f "$SLUG" hermes-assistant 2>&1 | sed 's/^/    /' || true
+echo "[2/5] Removing assistant container ..."
+docker rm -f "$SLUG" 2>&1 | sed 's/^/    /' || true
 
 echo
-echo "[3/6] Removing assistant images ..."
-docker image rm "${SLUG}:local" hermes-assistant:local 2>&1 | sed 's/^/    /' || true
+echo "[3/5] Removing assistant image ..."
+docker image rm "${SLUG}:local" 2>&1 | sed 's/^/    /' || true
 
 echo
-echo "[4/6] Removing assistant volumes ..."
+echo "[4/5] Removing assistant volumes ..."
 docker volume rm \
-  "${SLUG}_data" "${SLUG}_workbench" \
-  hermes-assistant_data hermes-assistant_workbench 2>&1 | sed 's/^/    /' || true
+  "${SLUG}_data" "${SLUG}_workbench" "${SLUG}_docker" 2>&1 | sed 's/^/    /' || true
 
 echo
-echo "[5/6] Removing legacy host runtime folders ..."
-rm -rf data workbench
-
-echo
-echo "[6/6] Pruning Docker builder cache ..."
+echo "[5/5] Pruning Docker builder cache ..."
 docker builder prune -af 2>&1 | tail -20 | sed 's/^/    /'
 
 if [[ "$PRUNE_SYSTEM" == true ]]; then

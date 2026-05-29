@@ -13,6 +13,9 @@ services:
     environment:
       # Hard-pin a few things so behaviour is deterministic regardless of .env content.
       HERMES_DASHBOARD: "1"
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_BUILDKIT: "1"
+      COMPOSE_DOCKER_CLI_BUILD: "1"
     ports:
       # Bind to localhost only. Never 0.0.0.0 on a personal machine.
       - "127.0.0.1:${API_PORT:-8642}:8642" # OpenAI-compatible API
@@ -26,42 +29,31 @@ services:
       # creates task branches in the existing checkout. The entrypoint chowns
       # this volume to the hermes runtime user before Hermes starts.
       - hermes_workbench:/workbench
+      # Inner Docker daemon state. This intentionally persists child images,
+      # containers, volumes, build cache, and Compose project state so coding
+      # agents can use Docker like they would on a standalone Linux machine.
+      - hermes_docker:/var/lib/docker
       # The coding-agent global AGENTS.md is seeded to data/coding-agents/AGENTS.md
       # on first boot. The init hook (scripts/hermes-entrypoint.sh) symlinks
       # it into the per-tool config dirs at startup, so codex and opencode each
       # see it as their own AGENTS.md. Cursor sees the same file as
       # /workbench/AGENTS.md when launched with /workbench as the workspace.
       # Single source of truth.
-    shm_size: "1g" # for any browser/Playwright tool calls
-    cap_drop:
-      - ALL
-    cap_add:
-      # Minimum runtime capabilities needed for entrypoint ownership fixes
-      # and for Hermes' base entrypoint to drop from root to the hermes user.
-      - CHOWN
-      - FOWNER
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-    security_opt:
-      - no-new-privileges:true
-    tmpfs:
-      - /tmp:rw,nosuid,nodev,size=512m
-      - /var/tmp:rw,noexec,nosuid,nodev,size=256m
+    # Intentional: this is a trusted, high-power development assistant, not a
+    # locked-down production service. The privileged container runs its own
+    # Docker daemon, which avoids host-socket path mismatches for /workbench.
+    privileged: true
+    shm_size: "2g" # for browsers, Playwright, and large test suites
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "5"
-    deploy:
-      resources:
-        limits:
-          memory: ${DOCKER_MEMORY:-4G}
-          cpus: "${DOCKER_CPUS:-12.0}"
-          pids: 512
 
 volumes:
   hermes_data:
     name: ${ASSISTANT_SLUG:-hermes-assistant}_data
   hermes_workbench:
     name: ${ASSISTANT_SLUG:-hermes-assistant}_workbench
+  hermes_docker:
+    name: ${ASSISTANT_SLUG:-hermes-assistant}_docker

@@ -1,5 +1,6 @@
 # Hermes Agent + coding sub-agents (Codex CLI, OpenCode CLI, Cursor CLI) + gh CLI
-# + the usual coding-agent toolkit. Built on top of the official Nous image.
+# + a full development toolbox and an in-container Docker daemon. Built on top
+# of the official Nous image.
 FROM nousresearch/hermes-agent:latest
 
 USER root
@@ -9,9 +10,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Bun lives at /usr/local/bin; `bun install -g <pkg>` writes binaries here too.
 ENV BUN_INSTALL=/usr/local
 ENV NVM_DIR=/usr/local/nvm
+ENV DOCKER_HOST=unix:///var/run/docker.sock
+ENV DOCKER_BUILDKIT=1
+ENV COMPOSE_DOCKER_CLI_BUILD=1
+ENV DOCKERD_STORAGE_DRIVER=overlay2
 
 # ---------------------------------------------------------------------------
-# Apt repos: official GitHub CLI plus the coding-agent toolkit.
+# Apt repos: official GitHub CLI, official Docker Engine, and a broad
+# development toolbox.
 # Node comes from nvm below so the image follows the current LTS line.
 # ---------------------------------------------------------------------------
 RUN apt-get update \
@@ -23,24 +29,44 @@ RUN apt-get update \
        && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
        && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
        > /etc/apt/sources.list.d/github-cli.list \
+       # Docker Engine / CLI / Compose / Buildx
+       && . /etc/os-release \
+       && curl -fsSL "https://download.docker.com/linux/${ID}/gpg" \
+       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+       && chmod go+r /etc/apt/keyrings/docker.gpg \
+       && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" \
+       > /etc/apt/sources.list.d/docker.list \
        && apt-get update \
-       # Coding-agent toolkit. Kept lean — agents bring per-repo toolchains themselves.
+       # Coding-agent and general development toolkit. This image is intended
+       # to feel like a real Ubuntu dev machine, not a minimal runtime.
        && apt-get install -y --no-install-recommends \
+       docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin fuse-overlayfs \
        gh \
-       git openssh-client \
-       ripgrep fd-find tree jq file patch diffutils less \
-       vim-tiny nano \
-       python3 python3-pip python3-venv \
-       wget unzip zip \
-       # bubblewrap: codex CLI uses it for filesystem-sandboxed tool execution.
-       # Bwrap needs unprivileged user namespaces; Docker Desktop's Linux VM has
-       # them on by default. If codex still fails with `bwrap: setting up uid map`
-       # add `cap_add: [SYS_ADMIN]` or `security_opt: [seccomp=unconfined]` to
-       # docker-compose.yml. Don't make the container `privileged: true`.
+       git git-lfs openssh-client rsync \
+       build-essential pkg-config make cmake ninja-build autoconf automake libtool \
+       clang gdb strace ltrace lsof procps psmisc htop \
+       ripgrep fd-find tree jq yq file patch diffutils less man-db \
+       vim nano bash-completion \
+       python3 python3-dev python3-pip python3-venv python3-setuptools pipx \
+       shellcheck shfmt sqlite3 \
+       golang-go cargo rustc \
+       iproute2 iputils-ping dnsutils netcat-openbsd telnet traceroute \
+       wget unzip zip xz-utils zstd tar gzip bzip2 ca-certificates \
+       sudo locales tzdata \
        bubblewrap \
        && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
        && apt-get clean \
        && rm -rf /var/lib/apt/lists/*
+
+# Make the runtime user a real development user. The container is explicitly a
+# trusted, privileged development environment; passwordless sudo lets coding
+# agents install missing OS packages when a repository needs them.
+RUN groupadd -f docker \
+       && HERMES_USER="$(getent passwd 10000 | cut -d: -f1)" \
+       && test -n "$HERMES_USER" \
+       && usermod -aG sudo,docker "$HERMES_USER" \
+       && printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$HERMES_USER" > /etc/sudoers.d/hermes \
+       && chmod 0440 /etc/sudoers.d/hermes
 
 # Node.js via nvm. Install and activate the current LTS line, then symlink the
 # selected node/npm/npx binaries into PATH for non-login Docker exec sessions.
@@ -74,7 +100,7 @@ RUN curl -fsSL https://bun.com/install | bash
 #   - OpenCode  → same OpenCode Go subscription as the Hermes brain
 #   - gws       → Google Workspace CLI backend for Hermes' google-workspace skill
 # Bun writes global binaries to $BUN_INSTALL/bin (= /usr/local/bin), already on PATH.
-RUN bun install -g @openai/codex opencode-ai @googleworkspace/cli@0.22.5
+RUN bun install -g @openai/codex opencode-ai @googleworkspace/cli
 
 # Cursor Agent CLI — installed from Cursor's official Linux installer. The
 # installer normally writes into $HOME/.local; using /opt/cursor-agent keeps the
@@ -96,6 +122,23 @@ RUN git config --system credential.https://github.com.helper "" \
        && git config --system --add credential.https://gist.github.com.helper "!gh auth git-credential" \
        && git config --system init.defaultBranch main \
        && git config --system pull.rebase false
+
+# Start a real Docker daemon inside this container instead of binding the host
+# daemon socket. This keeps normal repo-relative bind mounts working:
+# `docker run -v "$PWD":/app ...` sees /workbench from the same filesystem
+# namespace as the coding agent. Compose mounts /var/lib/docker as a persistent
+# named volume so images, layers, builder cache, and child containers survive
+# assistant restarts.
+RUN install -d -m 0755 /etc/services.d/dockerd \
+       && HERMES_GROUP="$(getent group "$(getent passwd 10000 | cut -d: -f4)" | cut -d: -f1)" \
+       && test -n "$HERMES_GROUP" \
+       && printf '%s\n' \
+       '#!/usr/bin/env bash' \
+       'set -euo pipefail' \
+       'mkdir -p /var/run /var/lib/docker' \
+       'exec dockerd --host=unix:///var/run/docker.sock --group='"$HERMES_GROUP"' --data-root=/var/lib/docker --storage-driver="${DOCKERD_STORAGE_DRIVER:-overlay2}"' \
+       > /etc/services.d/dockerd/run \
+       && chmod +x /etc/services.d/dockerd/run
 
 # Symlink the Hermes CLI onto /usr/local/bin so `docker compose exec assistant
 # hermes ...` works. The hermes binary lives inside Hermes' Python venv at
@@ -168,13 +211,15 @@ RUN F=/opt/hermes/hermes_state.py \
 RUN node --version && npm --version && bun --version && uv --version \
        && codex --version && opencode --version && agent --version && cursor-agent --version \
        && gws --version && python --version \
+       && docker --version && docker compose version && docker buildx version \
        && gh --version && git --version \
-       && rg --version | head -n1 && fd --version && jq --version || true
+       && go version && rustc --version && cargo --version \
+       && rg --version | head -n1 && fd --version && jq --version && yq --version || true
 
 # Runtime init hook: wires the coding-agent global AGENTS.md into the places
-# codex/opencode/cursor look at, then lets the base image's s6 /init continue
-# normal Hermes startup. See scripts/hermes-entrypoint.sh for why this is
-# runtime and not buildtime.
+# codex and opencode look at, then lets the base image's s6 /init continue
+# normal Hermes startup. Cursor is started from the target repo directory and
+# relies on repo-local Cursor rules.
 COPY templates/assistant /opt/hermes-assistant/templates/assistant
 COPY scripts/hermes-entrypoint.sh /usr/local/bin/hermes-entrypoint.sh
 RUN chmod +x /usr/local/bin/hermes-entrypoint.sh \
