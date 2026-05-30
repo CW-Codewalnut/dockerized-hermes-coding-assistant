@@ -48,6 +48,34 @@ chown_children_if_needed() {
   done
 }
 
+link_google_workspace_auth_path() {
+  local name source target
+  name="$1"
+  source="/opt/hermes/$name"
+  target="/opt/data/$name"
+
+  if [[ -e "$source" && ! -L "$source" && ! -e "$target" ]]; then
+    mv "$source" "$target"
+  elif [[ -e "$source" && ! -L "$source" && -e "$target" ]]; then
+    rm -f "$source"
+  fi
+
+  if [[ -L "$source" || ! -e "$source" ]]; then
+    ln -sfn "$target" "$source"
+  fi
+}
+
+for google_auth_file in google_client_secret.json google_token.json google_oauth_pending.json; do
+  link_google_workspace_auth_path "$google_auth_file"
+done
+chown_path_if_needed \
+  /opt/data/google_client_secret.json \
+  /opt/data/google_token.json \
+  /opt/data/google_oauth_pending.json \
+  /opt/hermes/google_client_secret.json \
+  /opt/hermes/google_token.json \
+  /opt/hermes/google_oauth_pending.json
+
 render_template() {
   local src="$1"
   local dst="$2"

@@ -1,6 +1,6 @@
 # Dockerized Hermes Coding Assistant
 
-Run a Telegram-accessible [Hermes Agent](https://hermes-agent.nousresearch.com/docs/) that behaves like a real coding workstation, not a toy chatbot.
+Run a Telegram-accessible [Hermes Agent](https://hermes-agent.nousresearch.com/docs/) that behaves like a real coding workstation.
 
 This repo packages Hermes with Codex CLI, OpenCode CLI, Cursor Agent CLI, GitHub CLI, optional Google Workspace tooling, a broad Ubuntu development toolbox, and an in-container Docker daemon. It is built for agents that need to clone repos, run tests, build containers, delegate coding tasks, inspect results, and keep working across restarts.
 
@@ -42,7 +42,7 @@ This is intentionally not a minimal production container. It is a trusted develo
 - **Protected branches stay protected:** no commits directly on `main`, `master`, `develop`, `dev`, `prod`, `production`, `staging`, or `release` without a second explicit confirmation.
 - **Delegation stays faithful:** Hermes shows the exact sub-agent prompt before delegation, passes the user's request through with only typo/grammar cleanup and minimal routing context, and defaults to Codex unless the user explicitly chooses OpenCode or Cursor.
 - **Cursor stays repo-scoped:** Cursor runs from the task worktree, never from all of `/workbench`.
-- **High-reasoning coding defaults:** Hermes brain model setup is handled interactively during setup; default Codex delegation uses `gpt-5.5` with `xhigh`, and OpenCode uses `max` when selected.
+- **Agentic model guidance:** Hermes brain model setup stays interactive, with DeepSeek V4 Flash via OpenCode Go as the recommended pick; default Codex delegation uses `gpt-5.5` with `xhigh`, and OpenCode uses `max` when selected.
 - **Transparency by default:** public-facing text gets the configured Hermes attribution footer unless the user explicitly opts out.
 
 ## Requirements
@@ -67,19 +67,19 @@ scripts/setup.sh
 
 Setup prompts for:
 
-| Prompt                              | Default / behavior                                                               |
-| ----------------------------------- | -------------------------------------------------------------------------------- |
-| Assistant name                      | Required. Used in persona, attribution, and generated instructions.              |
-| Assistant slug                      | Optional. Defaults to a Docker-safe slug from the assistant name.                |
-| User nickname                       | Required. This is how the assistant refers to the primary operator.              |
-| Branch prefix                       | Optional. Defaults to the assistant slug.                                        |
-| Dashboard/API localhost ports       | Defaults to `9119` and `8642`.                                                   |
-| External API server                 | Defaults to disabled. If enabled, setup creates or prompts for an API key.       |
-| Telegram bot token and allowed IDs  | Required for chat access.                                                        |
-| GitHub auth                         | Optional. If configured, setup derives git author defaults from GitHub.          |
-| Git author name/email               | Required. Prompted only when GitHub cannot provide them.                         |
-| Hermes, Codex, OpenCode, Cursor     | Optional interactive auth flows.                                                 |
-| Google Workspace                    | Optional OAuth setup by pasted JSON or local JSON file path.                     |
+| Prompt                             | Default / behavior                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| Assistant name                     | Required. Used in persona, attribution, and generated instructions.        |
+| Assistant slug                     | Optional. Defaults to a Docker-safe slug from the assistant name.          |
+| User nickname                      | Required. This is how the assistant refers to the primary operator.        |
+| Branch prefix                      | Optional. Defaults to the assistant slug.                                  |
+| Dashboard/API localhost ports      | Defaults to `9119` and `8642`.                                             |
+| External API server                | Defaults to disabled. If enabled, setup creates or prompts for an API key. |
+| Telegram bot token and allowed IDs | Required for chat access.                                                  |
+| GitHub auth                        | Optional. If configured, setup derives git author defaults from GitHub.    |
+| Git author name/email              | Required. Prompted only when GitHub cannot provide them.                   |
+| Hermes, Codex, OpenCode, Cursor    | Optional interactive auth flows.                                           |
+| Google Workspace                   | Optional OAuth setup by pasted JSON or local JSON file path.               |
 
 The local setup profile lives under `.assistant/`, which is ignored by git and mounted read-only into the container. Do not commit that directory.
 
@@ -132,13 +132,26 @@ http://localhost:<dashboard-port>
 
 ## Model Defaults
 
-| Runtime            | Default                                            |
+| Runtime            | Default / guidance                                 |
 | ------------------ | -------------------------------------------------- |
-| Hermes brain       | Configured interactively by `hermes setup model`.  |
+| Hermes brain       | Chosen interactively by `hermes setup model`       |
 | Default sub-agent  | Codex CLI with `gpt-5.5`, reasoning effort `xhigh` |
 | Codex sub-agent    | `gpt-5.5`, reasoning effort `xhigh`                |
 | OpenCode sub-agent | `opencode-go/deepseek-v4-pro`, variant `max`       |
 | Cursor sub-agent   | `composer-2.5`                                     |
+
+Recommended Hermes brain pick: OpenCode Go `opencode-go/deepseek-v4-flash`.
+
+The repo does not overwrite the Hermes brain model in `/opt/data/config.yaml`.
+To update an existing assistant, rerun model setup or switch the current chat:
+
+```bash
+scripts/compose.sh exec -u hermes -it assistant hermes setup model
+```
+
+```text
+/model opencode-go/deepseek-v4-flash
+```
 
 ## Docker And State
 
@@ -232,18 +245,18 @@ Use `--prune-system` carefully; it can remove unrelated stopped containers and u
 
 ## Files
 
-| Path                                                                           | Purpose                                      |
-| ------------------------------------------------------------------------------ | -------------------------------------------- |
-| `Dockerfile`                                                                   | Builds Hermes plus tooling.                  |
-| `docker-compose.yml`                                                           | Runs the assistant and volumes.              |
-| `scripts/setup.sh`                                                             | Interactive setup flow.                      |
+| Path                                                                           | Purpose                                       |
+| ------------------------------------------------------------------------------ | --------------------------------------------- |
+| `Dockerfile`                                                                   | Builds Hermes plus tooling.                   |
+| `docker-compose.yml`                                                           | Runs the assistant and volumes.               |
+| `scripts/setup.sh`                                                             | Interactive setup flow.                       |
 | `scripts/compose.sh`                                                           | Compose wrapper that loads the setup profile. |
-| `scripts/lib/setup-store.sh`                                                   | Shared local setup profile helpers.          |
-| `scripts/smoke-test.sh`                                                        | Post-setup checks.                           |
-| `scripts/backup-state.sh`, `scripts/restore-state.sh`, `scripts/clean-wipe.sh` | State management.                            |
-| `templates/assistant/SOUL.md`                                                  | Assistant persona.                           |
-| `templates/assistant/AGENTS.md`                                                | Main assistant operating rules.              |
-| `templates/assistant/coding-agents/AGENTS.md`                                  | Shared Codex/OpenCode sub-agent rules.       |
+| `scripts/lib/setup-store.sh`                                                   | Shared local setup profile helpers.           |
+| `scripts/smoke-test.sh`                                                        | Post-setup checks.                            |
+| `scripts/backup-state.sh`, `scripts/restore-state.sh`, `scripts/clean-wipe.sh` | State management.                             |
+| `templates/assistant/SOUL.md`                                                  | Assistant persona.                            |
+| `templates/assistant/AGENTS.md`                                                | Main assistant operating rules.               |
+| `templates/assistant/coding-agents/AGENTS.md`                                  | Shared Codex/OpenCode sub-agent rules.        |
 
 ## Troubleshooting
 

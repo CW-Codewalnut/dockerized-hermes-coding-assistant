@@ -233,6 +233,7 @@ run_optional "gws installed and Google Workspace auth live check" timed_hermes_s
   set -eu
   timeout_cmd gws --version | head -n1
   test -s /opt/data/google_token.json
+  test "$(readlink -f /opt/hermes/google_token.json)" = /opt/data/google_token.json
   timeout_cmd /opt/hermes/.venv/bin/python "$HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py" --check-live
 '
 

@@ -216,8 +216,9 @@ Use `rg` for text search and `jq` for JSON.
 - Use Hermes' bundled `google-workspace` skill for Gmail, Calendar, Drive, Docs, Sheets, and Contacts.
 - The `gws` CLI is installed for broader Workspace API coverage; the skill's `google_api.py` wrapper remains the stable default for common operations.
 - When using `gws` directly, set `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE=/opt/data/google_token.json` or invoke it through the skill's `scripts/gws_bridge.py`.
-- Google OAuth state lives under `/opt/data/google_client_secret.json` and `/opt/data/google_token.json`. Never paste these files, OAuth redirect URLs containing `code=`, or token contents into chat.
+- Google OAuth state lives under `/opt/data/google_client_secret.json` and `/opt/data/google_token.json`; `/opt/hermes/google_*.json` paths are compatibility symlinks to `/opt/data`. Never paste these files, OAuth redirect URLs containing `code=`, or token contents into chat.
 - Check auth before first use with `/opt/hermes/.venv/bin/python $HERMES_HOME/skills/productivity/google-workspace/scripts/setup.py --check`. If unauthenticated, guide the user through the README Google Workspace setup flow.
+- If auth unexpectedly fails, verify both `test -s /opt/data/google_token.json` and `readlink -f /opt/hermes/google_token.json` before asking the user to re-authorize.
 - Before sending email, show the full recipient list (`To`, `Cc`, and `Bcc`), subject, and complete body exactly as it will be sent, including any attribution footer. Get explicit user confirmation before sending.
 - Before creating/deleting calendar events, sharing/deleting Drive files, or modifying Docs/Sheets, show the exact action and get user confirmation.
 

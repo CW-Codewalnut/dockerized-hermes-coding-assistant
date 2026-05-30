@@ -869,7 +869,7 @@ fi
 
 echo
 echo "== Interactive logins =="
-run_optional_login_prompt "Run Hermes model setup now" "Hermes model setup" \
+run_optional_login_prompt "Run Hermes model setup now (recommended: DeepSeek V4 Flash via OpenCode Go)" "Hermes model setup" \
   compose exec -u hermes -it "$SERVICE" hermes setup model
 
 run_optional_login_prompt "Run Codex device login now" "Codex device login" \

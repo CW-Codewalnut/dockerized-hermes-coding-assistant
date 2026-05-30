@@ -15,6 +15,7 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_BUILDKIT: "1"
       COMPOSE_DOCKER_CLI_BUILD: "1"
+      GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: /opt/data/google_token.json
       ASSISTANT_CONFIG_DIR: /run/hermes-assistant/config
       ASSISTANT_SECRETS_DIR: /run/hermes-assistant/secrets
     ports:
